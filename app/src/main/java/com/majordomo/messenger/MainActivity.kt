@@ -65,13 +65,18 @@ class MainActivity : Activity() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val url = request.url.toString()
                 if (request.isForMainFrame && url != "file:///android_asset/index.html" && !url.startsWith("file:///android_asset/")) {
-                    // Keep the shell page as the top-level document. Redirect external top-level
-                    // navigations back into the embedded full-screen frame.
+                    // Keep the launcher as the top-level document; show navigated sites in its full-screen frame.
                     runOnUiThread { loadFrame(url) }
                     return true
                 }
                 val scheme = request.url.scheme ?: ""
-                if (scheme == "http" || scheme == "https" || scheme == "file") return false
+                if (scheme == "http" || scheme == "https") {
+                    // Navigations within the iframe (including server redirects) identify the
+                    // currently displayed page. Subresources do not enter shouldOverrideUrlLoading.
+                    if (!request.isForMainFrame) activeFrameUrl = url
+                    return false
+                }
+                if (scheme == "file") return false
                 return try { startActivity(Intent(Intent.ACTION_VIEW, request.url)); true }
                 catch (_: Exception) { true }
             }
