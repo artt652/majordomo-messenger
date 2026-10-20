@@ -24,6 +24,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 class MainActivity : Activity() {
     private lateinit var launcher: WebView
@@ -39,8 +41,11 @@ class MainActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = Color.rgb(63, 81, 181)
+        // Keep Android's system information row (time, battery, network) visible.
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        window.statusBarColor = Color.rgb(48, 63, 159)
         window.navigationBarColor = Color.BLACK
+        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = false
 
         CookieManager.getInstance().setAcceptCookie(true)
 
