@@ -1,0 +1,9 @@
+settings.gradle.kts
+build.gradle.kts
+gradle.properties
+app/build.gradle.kts
+app/src/main/AndroidManifest.xml
+app/src/main/res/values/strings.xml
+app/src/main/java/com/majordomo/messenger/MainActivity.kt
+.github/workflows/build-apk.yml
+README.md
