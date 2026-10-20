@@ -348,7 +348,26 @@ class MainActivity : Activity() {
         activeSiteUrl = url
         launcher.visibility = View.GONE
         site.visibility = View.VISIBLE
+        startBackgroundSession()
         site.loadUrl(url)
+    }
+
+    private fun startBackgroundSession() {
+        val intent = Intent(this, BackgroundSessionService::class.java).setAction(BackgroundSessionService.ACTION_START)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
+            else startService(intent)
+        } catch (_: Exception) {
+            // The WebView remains usable even if background execution is restricted by the OS.
+        }
+    }
+
+    private fun stopBackgroundSession() {
+        try {
+            startService(Intent(this, BackgroundSessionService::class.java).setAction(BackgroundSessionService.ACTION_STOP))
+        } catch (_: Exception) {
+            stopService(Intent(this, BackgroundSessionService::class.java))
+        }
     }
 
     private fun returnHomeAfterError(url: String, reason: String) {
@@ -360,6 +379,7 @@ class MainActivity : Activity() {
             site.stopLoading()
             site.visibility = View.GONE
             launcher.visibility = View.VISIBLE
+            stopBackgroundSession()
             launcher.evaluateJavascript(
                 "window.majordomoShowError && window.majordomoShowError(" +
                     org.json.JSONObject.quote(url) + "," + org.json.JSONObject.quote(reason) + ")",
@@ -437,6 +457,21 @@ class MainActivity : Activity() {
             launcher.goBack()
         } else {
             super.onBackPressed()
+        }
+    }
+
+    override fun onPause() {
+        // Persist session cookies when leaving the app; deliberately do not pause
+        // WebView timers so supported web sessions can continue while backgrounded.
+        CookieManager.getInstance().flush()
+        super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::site.isInitialized && site.visibility == View.VISIBLE) {
+            site.onResume()
+            site.resumeTimers()
         }
     }
 
