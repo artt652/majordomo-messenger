@@ -3,6 +3,9 @@ package com.majordomo.messenger
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
@@ -10,6 +13,7 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.os.Environment
 import android.view.View
 import android.webkit.CookieManager
@@ -28,6 +32,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.app.NotificationCompat
 
 class MainActivity : Activity() {
     private lateinit var launcher: WebView
@@ -39,6 +44,10 @@ class MainActivity : Activity() {
     @Volatile private var activeSiteUrl: String = ""
     private val permissionRequestCode = 301
     private val fileChooserCode = 401
+    private val notificationPermissionRequestCode = 501
+    private var pendingUnreadCount: Int? = null
+    private val unreadNotificationId = 7301
+    private val unreadChannelId = "majordomo_unread_messages"
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,6 +59,7 @@ class MainActivity : Activity() {
         WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = false
 
         CookieManager.getInstance().setAcceptCookie(true)
+        createUnreadNotificationChannel()
 
         root = FrameLayout(this)
         // Android 15+ enforces edge-to-edge for apps targeting SDK 35.
@@ -127,6 +137,14 @@ class MainActivity : Activity() {
         }
 
         site.webChromeClient = object : WebChromeClient() {
+            override fun onReceivedTitle(view: WebView, title: String?) {
+                super.onReceivedTitle(view, title)
+                if (!title.isNullOrBlank()) {
+                    val unread = parseUnreadCount(title)
+                    updateUnreadBadge(unread)
+                }
+            }
+
             override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
                 chooser?.onReceiveValue(null)
                 chooser = callback
@@ -230,6 +248,89 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun createUnreadNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channel = NotificationChannel(
+                unreadChannelId,
+                "Непрочитанные сообщения",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Индикатор непрочитанных сообщений Majordomo"
+                setShowBadge(true)
+                setSound(null, null)
+                enableVibration(false)
+                enableLights(false)
+            }
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun parseUnreadCount(title: String): Int {
+        // Common title formats: "(3) Majordomo", "Majordomo (3)", "3 - Majordomo",
+        // "[3] Majordomo", or "3 непрочитанных сообщения".
+        val patterns = listOf(
+            Regex("^\\s*\\((\\d{1,5})\\)"),
+            Regex("^\\s*\\[(\\d{1,5})\\]"),
+            Regex("^\\s*(\\d{1,5})\\s*[-:|—–]\\s*"),
+            Regex("\\((\\d{1,5})\\)\\s*$"),
+            Regex("^\\s*(\\d{1,5})\\s+(?:непрочитан|unread)", RegexOption.IGNORE_CASE)
+        )
+        for (pattern in patterns) {
+            val match = pattern.find(title) ?: continue
+            return match.groupValues[1].toIntOrNull()?.coerceAtMost(99999) ?: 0
+        }
+        return 0
+    }
+
+    private fun updateUnreadBadge(count: Int) {
+        runOnUiThread {
+            if (count <= 0) {
+                pendingUnreadCount = null
+                if (Build.VERSION.SDK_INT < 33 ||
+                    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                    (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(unreadNotificationId)
+                }
+                return@runOnUiThread
+            }
+
+            if (Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                pendingUnreadCount = count
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), notificationPermissionRequestCode)
+                return@runOnUiThread
+            }
+
+            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+            val pendingIntent = launchIntent?.let {
+                PendingIntent.getActivity(
+                    this,
+                    0,
+                    it,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            }
+            val icon = applicationInfo.icon.takeIf { it != 0 } ?: android.R.drawable.ic_dialog_info
+            val notification = NotificationCompat.Builder(this, unreadChannelId)
+                .setSmallIcon(icon)
+                .setContentTitle("Majordomo Message")
+                .setContentText(if (count == 1) "1 непрочитанное сообщение" else "$count непрочитанных сообщений")
+                .setNumber(count)
+                .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
+                .setOnlyAlertOnce(true)
+                .setSilent(true)
+                .setOngoing(true)
+                .setContentIntent(pendingIntent)
+                .build()
+            try {
+                (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                    .notify(unreadNotificationId, notification)
+            } catch (_: SecurityException) {
+                // Notifications may be disabled by the user or device policy.
+            }
+        }
+    }
+
     private fun normalizeUrl(raw: String): String? {
         val value = raw.trim()
         if (value.isEmpty()) return null
@@ -286,6 +387,14 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == notificationPermissionRequestCode) {
+            val count = pendingUnreadCount
+            pendingUnreadCount = null
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED && count != null) {
+                updateUnreadBadge(count)
+            }
+            return
+        }
         if (requestCode == permissionRequestCode) {
             val request = pendingRequest
             if (request != null) {
