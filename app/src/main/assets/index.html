@@ -73,7 +73,11 @@ button:active{opacity:.8}
  function setBusy(busy){loading.style.display=busy?'block':'none'}
  function cancelRetry(){if(retryTimer){clearTimeout(retryTimer);retryTimer=null}}
  function openSite(raw){const url=normalize(raw);if(!url){message.textContent='Введите корректный адрес, например https://example.com';input.focus();return}
- cancelRetry();currentUrl=url;input.value=url;message.textContent='Открываем '+hostLabel(url);home.style.display='none';viewer.style.display='block';setBusy(true);site.src='about:blank';setTimeout(()=>{if(currentUrl===url)site.src=url},20);saveRecent(url);try{if(window.MajordomoApp)MajordomoApp.setActiveUrl(url)}catch(e){}}
+ cancelRetry();currentUrl=url;input.value=url;message.textContent='Открываем '+hostLabel(url)+'…';saveRecent(url);
+ try {
+   if(window.MajordomoApp && typeof MajordomoApp.openSite==='function'){MajordomoApp.openSite(url);return}
+   message.textContent='Обновите приложение до последней версии, чтобы открыть сайт.';
+ } catch(e) { message.textContent='Не удалось открыть сайт. Попробуйте ещё раз.'; }}
  function returnHome(reason,url){cancelRetry();setBusy(false);viewer.style.display='none';home.style.display='flex';site.src='about:blank';input.value=url||currentUrl||'';message.textContent=reason||'Сайт недоступен. Проверьте адрес и подключение.';input.focus();showToast('Возврат на главную страницу')}
  openBtn.addEventListener('click',()=>openSite(input.value));
  input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openSite(input.value)}});
