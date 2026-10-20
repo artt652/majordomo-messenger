@@ -23,9 +23,12 @@ button:active{opacity:.8}
 #message{font-size:13px;color:var(--muted);min-height:20px;margin-top:12px}
 .section-title{font-size:13px;font-weight:700;margin:22px 0 8px}
 #recent{display:flex;flex-direction:column;gap:6px}
-.recent-item{width:100%;display:flex;align-items:center;gap:10px;text-align:left;background:#fff;color:var(--ink);border:1px solid #e8ebf3;border-radius:12px;padding:11px 12px;min-height:44px;font-size:13px;font-weight:500}
+.recent-row{display:flex;align-items:stretch;gap:6px}
+.recent-item{flex:1;min-width:0;display:flex;align-items:center;gap:10px;text-align:left;background:#fff;color:var(--ink);border:1px solid #e8ebf3;border-radius:12px;padding:11px 12px;min-height:44px;font-size:13px;font-weight:500}
 .recent-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 .recent-item small{color:var(--muted);font-size:11px}
+.delete-address{flex:0 0 44px;min-width:44px;min-height:44px;padding:0;border:1px solid #f0d7d7;border-radius:12px;background:#fff;color:#bd3434;font-size:20px;line-height:1}
+.delete-address:active{background:#fff0f0}
 .footer{text-align:center;color:#9095a5;font-size:11px;margin-top:20px}
 #viewer{display:none;position:fixed;inset:0;background:#fff}
 #site{border:0;width:100%;height:100%;display:block;background:#fff}
@@ -67,7 +70,8 @@ button:active{opacity:.8}
  function saveRecent(url){let list=readRecent().filter(x=>x!==url);list.unshift(url);try{localStorage.setItem(KEY,JSON.stringify(list.slice(0,10)))}catch(e){};renderRecent()}
  function hostLabel(url){try{return new URL(url).host}catch(e){return url}}
  function renderRecent(){recent.innerHTML='';const list=readRecent();if(!list.length){const empty=document.createElement('div');empty.style.cssText='color:#8b90a0;font-size:13px;padding:8px 2px';empty.textContent='Здесь появятся адреса, которые вы открывали.';recent.appendChild(empty);return}
- list.forEach(url=>{const b=document.createElement('button');b.className='recent-item';const icon=document.createElement('small');icon.textContent='↗';const text=document.createElement('span');text.textContent=url;b.append(icon,text);b.addEventListener('click',()=>{input.value=url;openSite(url)});recent.appendChild(b)})}
+ list.forEach(url=>{const row=document.createElement('div');row.className='recent-row';const b=document.createElement('button');b.className='recent-item';b.type='button';const icon=document.createElement('small');icon.textContent='↗';const text=document.createElement('span');text.textContent=url;b.append(icon,text);b.addEventListener('click',()=>{input.value=url;openSite(url)});const del=document.createElement('button');del.className='delete-address';del.type='button';del.textContent='×';del.setAttribute('aria-label','Удалить адрес '+url);del.title='Удалить адрес';del.addEventListener('click',()=>removeRecent(url));row.append(b,del);recent.appendChild(row)})}
+ function removeRecent(url){const list=readRecent().filter(item=>item!==url);try{localStorage.setItem(KEY,JSON.stringify(list))}catch(e){};if(currentUrl===url){currentUrl='';}renderRecent();showToast('Адрес удалён')}
  function normalize(raw){let value=String(raw||'').trim();if(!value)return null;if(!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value))value='https://'+value;try{const u=new URL(value);if(!['http:','https:'].includes(u.protocol)||!u.hostname)return null;return u.href}catch(e){return null}}
  function showToast(text){toast.textContent=text;toast.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.style.display='none',2600)}
  function setBusy(busy){loading.style.display=busy?'block':'none'}
