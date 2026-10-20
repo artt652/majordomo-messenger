@@ -26,6 +26,8 @@ import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : Activity() {
     private lateinit var launcher: WebView
@@ -50,6 +52,16 @@ class MainActivity : Activity() {
         CookieManager.getInstance().setAcceptCookie(true)
 
         root = FrameLayout(this)
+        // Android 15+ enforces edge-to-edge for apps targeting SDK 35.
+        // Keep the system status bar visible and reserve its inset so WebView
+        // content (including full-screen pages) cannot draw over the clock/icons.
+        root.setBackgroundColor(Color.rgb(48, 63, 159))
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val statusTop = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            val navigationBottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+            view.setPadding(0, statusTop, 0, navigationBottom)
+            insets
+        }
         launcher = WebView(this)
         site = WebView(this)
 
