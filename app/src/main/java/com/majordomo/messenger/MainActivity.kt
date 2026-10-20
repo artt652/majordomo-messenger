@@ -144,7 +144,7 @@ class MainActivity : Activity() {
         val toolbar = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(7), dp(5), dp(7), dp(3)); setBackgroundColor(blue) }
         val addressRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         address = EditText(this).apply {
-            hint = "Адрес сайта или поисковый запрос"; singleLine = true; textSize = 14f
+            hint = "Адрес сайта или поисковый запрос"; setSingleLine(true); textSize = 14f
             setTextColor(Color.BLACK); setHintTextColor(Color.GRAY); setPadding(dp(9), 0, dp(8), 0); setBackgroundColor(Color.WHITE)
             imeOptions = EditorInfo.IME_ACTION_GO
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
