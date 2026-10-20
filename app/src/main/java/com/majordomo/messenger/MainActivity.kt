@@ -270,10 +270,8 @@ class MainActivity : Activity() {
         // Common title formats: "(3) Majordomo", "Majordomo (3)", "3 - Majordomo",
         // "[3] Majordomo", or "3 непрочитанных сообщения".
         val patterns = listOf(
-            Regex("^\\s*\\((\\d{1,5})\\)"),
-            Regex("^\\s*\\[(\\d{1,5})\\]"),
+            Regex("[\\[(](\\d{1,5})[\\])]"), // count anywhere in (3) or [3]
             Regex("^\\s*(\\d{1,5})\\s*[-:|—–]\\s*"),
-            Regex("\\((\\d{1,5})\\)\\s*$"),
             Regex("^\\s*(\\d{1,5})\\s+(?:непрочитан|unread)", RegexOption.IGNORE_CASE)
         )
         for (pattern in patterns) {
