@@ -83,7 +83,7 @@ button:active{opacity:.8}
  input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openSite(input.value)}});
  site.addEventListener('load',()=>{setBusy(false);try{if(window.MajordomoApp)MajordomoApp.setActiveUrl(currentUrl)}catch(e){}});
  window.majordomoLoad=function(url){openSite(url)};
- window.majordomoShowError=function(url,reason){if(!url||url===currentUrl||url===site.src)returnHome('Не удалось открыть сайт: '+reason+'\nПроверьте адрес и подключение.',url)};
+ window.majordomoShowError=function(url,reason){currentUrl=url||currentUrl;returnHome('Не удалось открыть сайт: '+reason+'\nПроверьте адрес и подключение.',url||currentUrl)};
  window.majordomoInvalidUrl=function(){message.textContent='Проверьте адрес: нужен адрес сайта с http:// или https://';home.style.display='flex';viewer.style.display='none'};
  window.majordomoGoBack=function(){if(viewer.style.display==='block'){try{site.contentWindow.history.back()}catch(e){returnHome('Возврат на главную страницу',currentUrl)}}else{input.focus()}};
  window.addEventListener('message',e=>{if(e.data&&e.data.type==='majordomo-error')returnHome('Сайт сообщил об ошибке.',currentUrl)});
