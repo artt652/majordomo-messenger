@@ -254,10 +254,10 @@ class MainActivity : Activity() {
 
     private fun returnHomeAfterError(url: String, reason: String) {
         runOnUiThread {
+            // The callback is already restricted to main-frame failures / HTTP errors.
+            // Do not compare against site.url here: during HTTP redirects WebView may
+            // still report the previous URL, causing the fallback to be silently skipped.
             if (site.visibility != View.VISIBLE) return@runOnUiThread
-            // Ignore late errors from requests that are no longer the current top-level page.
-            val current = site.url ?: activeSiteUrl
-            if (url != current && url != activeSiteUrl) return@runOnUiThread
             site.stopLoading()
             site.visibility = View.GONE
             launcher.visibility = View.VISIBLE
