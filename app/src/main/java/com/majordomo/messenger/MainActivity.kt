@@ -87,7 +87,7 @@ class MainActivity : Activity() {
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
                 super.onReceivedError(view, request, error)
                 if (request.isForMainFrame &&
-                    error.errorCode != WebViewClient.ERROR_ABORTED &&
+                    error.errorCode != -3 &&
                     error.errorCode != WebViewClient.ERROR_UNSUPPORTED_SCHEME) {
                     returnHomeAfterError(request.url.toString(), error.description?.toString() ?: "Ошибка сети")
                 }
