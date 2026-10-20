@@ -6,17 +6,17 @@
 <meta name="theme-color" content="#3f51b5">
 <title>Majordomo Message</title>
 <style>
-:root{color-scheme:light;--blue:#3f51b5;--bg:#f4f6fb;--ink:#202438;--muted:#6c7285}
+:root{color-scheme:light dark;--blue:#3f51b5;--bg:#f4f6fb;--ink:#202438;--muted:#6c7285;--card:#fff;--field:#fff;--border:#dce1ee;--row-border:#e8ebf3;--shadow:0 8px 28px #25336a12;--danger-bg:#fff;--danger-border:#f0d7d7;--danger-pressed:#fff0f0;--toast-bg:#292d3e;--toast-ink:#fff}
 *{box-sizing:border-box}
 html,body{margin:0;width:100%;height:100%;font-family:system-ui,-apple-system,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink)}
 #home{min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px}
 .panel{width:min(100%,440px);margin:auto}
 .brand{font-size:27px;font-weight:750;letter-spacing:-.5px;text-align:center;color:var(--blue);margin-bottom:8px}
 .subtitle{text-align:center;color:var(--muted);font-size:14px;margin:0 0 28px}
-.card{background:#fff;border-radius:20px;padding:20px;box-shadow:0 8px 28px #25336a12}
+.card{background:var(--card);border-radius:20px;padding:20px;box-shadow:var(--shadow)}
 label{display:block;font-size:13px;font-weight:650;margin:0 0 8px}
 .field{display:flex;gap:8px}
-input{min-width:0;flex:1;border:1px solid #dce1ee;border-radius:12px;padding:13px 12px;font:inherit;font-size:15px;outline:none;background:#fff}
+input{min-width:0;flex:1;border:1px solid var(--border);border-radius:12px;padding:13px 12px;font:inherit;font-size:15px;outline:none;background:var(--field);color:var(--ink)}
 input:focus{border-color:var(--blue);box-shadow:0 0 0 3px #3f51b51a}
 button{border:0;border-radius:12px;background:var(--blue);color:#fff;padding:0 16px;font:inherit;font-weight:650;min-height:46px}
 button:active{opacity:.8}
@@ -24,18 +24,30 @@ button:active{opacity:.8}
 .section-title{font-size:13px;font-weight:700;margin:22px 0 8px}
 #recent{display:flex;flex-direction:column;gap:6px}
 .recent-row{display:flex;align-items:stretch;gap:6px}
-.recent-item{flex:1;min-width:0;display:flex;align-items:center;gap:10px;text-align:left;background:#fff;color:var(--ink);border:1px solid #e8ebf3;border-radius:12px;padding:11px 12px;min-height:44px;font-size:13px;font-weight:500}
+.recent-item{flex:1;min-width:0;display:flex;align-items:center;gap:10px;text-align:left;background:var(--card);color:var(--ink);border:1px solid var(--row-border);border-radius:12px;padding:11px 12px;min-height:44px;font-size:13px;font-weight:500}
 .recent-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 .recent-item small{color:var(--muted);font-size:11px}
-.delete-address{flex:0 0 44px;min-width:44px;min-height:44px;padding:0;border:1px solid #f0d7d7;border-radius:12px;background:#fff;color:#bd3434;font-size:20px;line-height:1}
-.delete-address:active{background:#fff0f0}
+.delete-address{flex:0 0 44px;min-width:44px;min-height:44px;padding:0;border:1px solid var(--danger-border);border-radius:12px;background:var(--danger-bg);color:#bd3434;font-size:20px;line-height:1}
+.delete-address:active{background:var(--danger-pressed)}
 .footer{text-align:center;color:#9095a5;font-size:11px;margin-top:20px}
-#viewer{display:none;position:fixed;inset:0;background:#fff}
-#site{border:0;width:100%;height:100%;display:block;background:#fff}
+#viewer{display:none;position:fixed;inset:0;background:var(--card)}
+#site{border:0;width:100%;height:100%;display:block;background:var(--card)}
 #loading{position:absolute;left:0;right:0;top:0;height:3px;background:#e7e9f5;overflow:hidden;display:none}
 #loading:after{content:"";display:block;height:100%;width:35%;background:var(--blue);animation:slide 1.1s ease-in-out infinite}
 @keyframes slide{from{transform:translateX(-110%)}to{transform:translateX(310%)}}
-#toast{position:fixed;left:16px;right:16px;bottom:20px;background:#292d3e;color:white;padding:13px 16px;border-radius:12px;font-size:13px;display:none;box-shadow:0 4px 18px #0002}
+@media (prefers-color-scheme: dark){
+ :root{--blue:#90a4ff;--bg:#111318;--ink:#edf0fa;--muted:#a8afc2;--card:#1b1e26;--field:#151820;--border:#3b4050;--row-border:#353a49;--shadow:0 8px 28px #0006;--danger-bg:#211a1d;--danger-border:#553239;--danger-pressed:#382126;--toast-bg:#e7eaf4;--toast-ink:#171922}
+ .brand{color:var(--blue)}
+ input:focus{border-color:var(--blue);box-shadow:0 0 0 3px #90a4ff24}
+ button{background:var(--blue);color:#111522}
+ .recent-item{background:var(--card)}
+ .delete-address{color:#ff9298}
+ #loading{background:#303545}
+ #loading:after{background:var(--blue)}
+ .footer{color:#858c9e}
+}
+
+#toast{position:fixed;left:16px;right:16px;bottom:20px;background:var(--toast-bg);color:var(--toast-ink);padding:13px 16px;border-radius:12px;font-size:13px;display:none;box-shadow:0 4px 18px #0002}
 </style>
 </head>
 <body>
@@ -64,6 +76,10 @@ button:active{opacity:.8}
 <script>
 (function(){
  const home=document.getElementById('home'), viewer=document.getElementById('viewer'), input=document.getElementById('url'), openBtn=document.getElementById('open'), recent=document.getElementById('recent'), message=document.getElementById('message'), site=document.getElementById('site'), loading=document.getElementById('loading'), toast=document.getElementById('toast');
+ const colorScheme=window.matchMedia('(prefers-color-scheme: dark)');
+ function applySystemTheme(){const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.content=colorScheme.matches?'#111318':'#3f51b5';}
+ applySystemTheme();
+ if(colorScheme.addEventListener)colorScheme.addEventListener('change',applySystemTheme);else if(colorScheme.addListener)colorScheme.addListener(applySystemTheme);
  const KEY='majordomo_recent_urls';
  let retryTimer=null, toastTimer=null, currentUrl='';
  function readRecent(){try{return JSON.parse(localStorage.getItem(KEY)||'[]').filter(x=>typeof x==='string').slice(0,10)}catch(e){return []}}
