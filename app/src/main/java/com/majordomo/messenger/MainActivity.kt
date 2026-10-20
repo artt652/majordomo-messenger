@@ -174,8 +174,11 @@ class MainActivity : Activity() {
 
         if (savedInstanceState != null) {
             val showingSite = savedInstanceState.getBoolean("showing_site", false)
-            val restored = if (showingSite) site.restoreState(savedInstanceState) else launcher.restoreState(savedInstanceState)
-            if (restored == null) launcher.loadUrl("file:///android_asset/index.html")
+            val launcherState = savedInstanceState.getBundle("launcher_state")
+            val siteState = savedInstanceState.getBundle("site_state")
+            if (showingSite && siteState != null) site.restoreState(siteState)
+            else if (launcherState != null) launcher.restoreState(launcherState)
+            else launcher.loadUrl("file:///android_asset/index.html")
             if (showingSite && site.url != null) {
                 activeSiteUrl = site.url ?: ""
                 site.visibility = View.VISIBLE
@@ -252,7 +255,7 @@ class MainActivity : Activity() {
     inner class PageBridge {
         @android.webkit.JavascriptInterface
         fun openSite(url: String) {
-            runOnUiThread { openSite(url) }
+            runOnUiThread { this@MainActivity.openSite(url) }
         }
     }
 
@@ -284,9 +287,16 @@ class MainActivity : Activity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        if (::launcher.isInitialized) launcher.saveState(outState)
-        if (::site.isInitialized) site.saveState(outState)
+        if (::launcher.isInitialized) {
+            val launcherState = Bundle()
+            launcher.saveState(launcherState)
+            outState.putBundle("launcher_state", launcherState)
+        }
+        if (::site.isInitialized) {
+            val siteState = Bundle()
+            site.saveState(siteState)
+            outState.putBundle("site_state", siteState)
+        }
         outState.putBoolean("showing_site", ::site.isInitialized && site.visibility == View.VISIBLE)
         super.onSaveInstanceState(outState)
     }
