@@ -53,6 +53,7 @@ class MainActivity : Activity() {
     private val unreadChannelId = "majordomo_unread_messages"
 
     @SuppressLint("SetJavaScriptEnabled")
+    @Suppress("DEPRECATION") // Keep status/navigation bar colors for devices below API 35.
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Keep Android's system information row (time, battery, network) visible.
@@ -241,6 +242,7 @@ class MainActivity : Activity() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
+    @Suppress("DEPRECATION") // Keep legacy WebView database setting for older WebView versions.
     private fun configureWebView(view: WebView) {
         view.setBackgroundColor(Color.WHITE)
         view.settings.apply {
@@ -516,6 +518,7 @@ class MainActivity : Activity() {
     }
 
     @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION") // Preserve existing back-navigation behavior on all supported API levels.
     override fun onBackPressed() {
         if (::site.isInitialized && site.visibility == View.VISIBLE) {
             if (site.canGoBack()) site.goBack() else {
