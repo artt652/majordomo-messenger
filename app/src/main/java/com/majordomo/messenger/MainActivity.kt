@@ -113,6 +113,9 @@ class MainActivity : Activity() {
     @Suppress("DEPRECATION") // Keep status/navigation bar colors for devices below API 35.
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Resize the app's usable area when the soft keyboard appears, as browsers do.
+        @Suppress("DEPRECATION")
+        window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         // Keep Android's system information row (time, battery, network) visible.
         WindowCompat.setDecorFitsSystemWindows(window, true)
         window.statusBarColor = Color.rgb(17, 19, 24)
@@ -130,7 +133,13 @@ class MainActivity : Activity() {
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val statusTop = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
             val navigationBottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
-            view.setPadding(0, statusTop, 0, navigationBottom)
+            val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
+            val bottomInset = if (insets.isVisible(WindowInsetsCompat.Type.ime())) {
+                maxOf(navigationBottom, imeInsets.bottom)
+            } else {
+                navigationBottom
+            }
+            view.setPadding(0, statusTop, 0, bottomInset)
             insets
         }
         launcher = WebView(this)
