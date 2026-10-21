@@ -123,7 +123,8 @@ class MainActivity : Activity() {
         // Resize the app's usable area when the soft keyboard appears, as browsers do.
         @Suppress("DEPRECATION")
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-        // Keep Android's system information row (time, battery, network) visible.
+        // Let Android resize the activity for the IME. Do not also apply IME
+        // insets as root padding: on some devices this double-shrinks the content.
         WindowCompat.setDecorFitsSystemWindows(window, true)
         window.statusBarColor = Color.rgb(17, 19, 24)
         window.navigationBarColor = Color.rgb(17, 19, 24)
@@ -133,20 +134,13 @@ class MainActivity : Activity() {
         createUnreadNotificationChannel()
 
         root = FrameLayout(this)
-        // Android 15+ enforces edge-to-edge for apps targeting SDK 35.
-        // Keep the system status bar visible and reserve its inset so WebView
-        // content (including full-screen pages) cannot draw over the clock/icons.
-        root.setBackgroundColor(Color.rgb(48, 63, 159))
+        // Keep the system bars clear of the WebView. Soft-keyboard resizing is
+        // handled by SOFT_INPUT_ADJUST_RESIZE, not by adding the IME height again.
+        root.setBackgroundColor(Color.rgb(24, 26, 32))
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val statusTop = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
             val navigationBottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
-            val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
-            val bottomInset = if (insets.isVisible(WindowInsetsCompat.Type.ime())) {
-                maxOf(navigationBottom, imeInsets.bottom)
-            } else {
-                navigationBottom
-            }
-            view.setPadding(0, statusTop, 0, bottomInset)
+            view.setPadding(0, statusTop, 0, navigationBottom)
             insets
         }
         launcher = WebView(this)
