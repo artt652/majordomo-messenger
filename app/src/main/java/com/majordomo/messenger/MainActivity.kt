@@ -19,6 +19,9 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.os.Environment
+import android.provider.MediaStore
+import androidx.core.content.FileProvider
+import java.io.File
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.ConsoleMessage
@@ -57,6 +60,9 @@ class MainActivity : Activity() {
     private var qrScannerOverlay: FrameLayout? = null
     private var qrBarcodeView: DecoratedBarcodeView? = null
     private var chooser: ValueCallback<Array<Uri>>? = null
+    private var pendingChooserParams: WebChromeClient.FileChooserParams? = null
+    private var pendingCaptureUri: Uri? = null
+    private var pendingCaptureFile: File? = null
     private data class PendingMediaRequest(
         val request: PermissionRequest,
         val resources: Array<String>
@@ -72,6 +78,7 @@ class MainActivity : Activity() {
     private val permissionRequestCode = 301
     private val qrCameraPermissionRequestCode = 302
     private val fileChooserCode = 401
+    private val cameraCaptureCode = 402
     private val notificationPermissionRequestCode = 501
     private var pendingUnreadCount: Int? = null
     private val unreadNotificationId = 7301
@@ -262,13 +269,15 @@ class MainActivity : Activity() {
             override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
                 chooser?.onReceiveValue(null)
                 chooser = callback
-                return try {
-                    startActivityForResult(params.createIntent(), fileChooserCode)
-                    true
-                } catch (_: Exception) {
-                    chooser = null
-                    false
+                pendingChooserParams = params
+
+                // capture is only a hint to WebView. Launch the camera explicitly because
+                // some Android file pickers ignore it and open the gallery instead.
+                if (params.isCaptureEnabled) {
+                    val mime = captureMimeType(params.acceptTypes)
+                    if (mime != null && launchCameraCapture(mime)) return true
                 }
+                return launchFileChooser()
             }
 
             override fun onPermissionRequest(request: PermissionRequest) {
@@ -893,10 +902,99 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
-        if (requestCode == fileChooserCode) {
-            chooser?.onReceiveValue(if (resultCode == RESULT_OK) WebChromeClient.FileChooserParams.parseResult(resultCode, data) else null)
-            chooser = null
+        when (requestCode) {
+            cameraCaptureCode -> {
+                val outputUri = pendingCaptureUri
+                val outputFile = pendingCaptureFile
+                val capturedUri = when {
+                    resultCode != RESULT_OK -> null
+                    data?.data != null -> data.data
+                    outputUri != null && outputFile?.exists() == true && outputFile.length() > 0L -> outputUri
+                    else -> null
+                }
+
+                if (capturedUri != null) {
+                    chooser?.onReceiveValue(arrayOf(capturedUri))
+                    clearPendingCapture(deleteFile = capturedUri != outputUri)
+                    chooser = null
+                    pendingChooserParams = null
+                } else {
+                    // Some camera apps return RESULT_CANCELED or do not write the output URI.
+                    // Fall back to the normal picker so the user can still select an existing file.
+                    clearPendingCapture(deleteFile = true)
+                    if (!launchFileChooser()) finishFileChooser(null)
+                }
+            }
+            fileChooserCode -> {
+                val result = if (resultCode == RESULT_OK) WebChromeClient.FileChooserParams.parseResult(resultCode, data) else null
+                finishFileChooser(result)
+            }
         }
+    }
+
+    private fun captureMimeType(acceptTypes: Array<String>): String? {
+        val types = acceptTypes.map { it.substringBefore(';').trim().lowercase() }.filter { it.isNotEmpty() }
+        return when {
+            types.any { it == "image/*" || it.startsWith("image/") } -> "image/jpeg"
+            types.any { it == "video/*" || it.startsWith("video/") } -> "video/mp4"
+            else -> null
+        }
+    }
+
+    private fun launchCameraCapture(mimeType: String): Boolean {
+        val action = if (mimeType.startsWith("video/")) Intent(MediaStore.ACTION_VIDEO_CAPTURE) else Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+        return try {
+            val directory = File(cacheDir, "camera-capture").apply { mkdirs() }
+            val extension = if (mimeType.startsWith("video/")) ".mp4" else ".jpg"
+            val outputFile = File.createTempFile("capture_", extension, directory)
+            val outputUri = FileProvider.getUriForFile(this, "$packageName.fileprovider", outputFile)
+            action.putExtra(MediaStore.EXTRA_OUTPUT, outputUri)
+            action.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            action.clipData = android.content.ClipData.newUri(contentResolver, "capture", outputUri)
+            if (action.resolveActivity(packageManager) == null) {
+                outputFile.delete()
+                return false
+            }
+            pendingCaptureUri = outputUri
+            pendingCaptureFile = outputFile
+            startActivityForResult(action, cameraCaptureCode)
+            true
+        } catch (_: android.content.ActivityNotFoundException) {
+            clearPendingCapture(deleteFile = true)
+            false
+        } catch (_: Exception) {
+            clearPendingCapture(deleteFile = true)
+            false
+        }
+    }
+
+    private fun launchFileChooser(): Boolean {
+        val params = pendingChooserParams
+        return try {
+            if (params == null) {
+                finishFileChooser(null)
+                false
+            } else {
+                startActivityForResult(params.createIntent(), fileChooserCode)
+                true
+            }
+        } catch (_: Exception) {
+            finishFileChooser(null)
+            false
+        }
+    }
+
+    private fun finishFileChooser(result: Array<Uri>?) {
+        chooser?.onReceiveValue(result)
+        chooser = null
+        pendingChooserParams = null
+        clearPendingCapture(deleteFile = result == null)
+    }
+
+    private fun clearPendingCapture(deleteFile: Boolean) {
+        if (deleteFile) pendingCaptureFile?.let { try { it.delete() } catch (_: Exception) { } }
+        pendingCaptureUri = null
+        pendingCaptureFile = null
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -990,6 +1088,8 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         chooser?.onReceiveValue(null)
+        clearPendingCapture(deleteFile = true)
+        pendingChooserParams = null
         pendingRequest?.deny()
         while (!queuedMediaRequests.isEmpty()) {
             try { queuedMediaRequests.removeFirst().request.deny() } catch (_: Exception) {}
