@@ -139,6 +139,7 @@ class MainActivity : Activity() {
         CookieManager.getInstance().setAcceptThirdPartyCookies(site, true)
 
         launcher.addJavascriptInterface(PageBridge(), "MajordomoApp")
+        site.addJavascriptInterface(PageBridge(), "MajordomoApp")
         launcher.webChromeClient = createMediaWebChromeClient(launcher)
         launcher.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
