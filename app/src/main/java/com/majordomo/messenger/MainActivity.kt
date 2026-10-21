@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Environment
 import android.view.View
 import android.webkit.CookieManager
+import android.webkit.ConsoleMessage
 import android.webkit.DownloadListener
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
@@ -237,6 +238,14 @@ class MainActivity : Activity() {
                 if (!title.isNullOrBlank()) updateUnreadBadge(parseUnreadCount(title))
             }
 
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                android.util.Log.d(
+                    "MajordomoMedia",
+                    "JS console: ${consoleMessage.message()} (${consoleMessage.sourceId()}:${consoleMessage.lineNumber()})"
+                )
+                return super.onConsoleMessage(consoleMessage)
+            }
+
             override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
                 chooser?.onReceiveValue(null)
                 chooser = callback
@@ -251,6 +260,10 @@ class MainActivity : Activity() {
 
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread {
+                    android.util.Log.d(
+                        "MajordomoMedia",
+                        "Permission request: webView=${if (view === site) "site" else if (view === launcher) "launcher" else "unknown"}, pageUrl=${view.url}, origin=${request.origin}, resources=${request.resources.joinToString()}"
+                    )
                     // Chromium only permits getUserMedia on secure origins:
                     // HTTPS, plus loopback addresses which Chromium treats as trustworthy.
                     val originUri = Uri.parse(request.origin.toString())
@@ -259,6 +272,10 @@ class MainActivity : Activity() {
                         (originUri.scheme == "http" &&
                             (originHost == "localhost" || originHost == "127.0.0.1" || originHost == "::1"))
                     if (!secureOrigin) {
+                        android.util.Log.w(
+                            "MajordomoMedia",
+                            "Denied media request: insecure origin=${request.origin}, pageUrl=${view.url}, scheme=${originUri.scheme}, host=$originHost"
+                        )
                         request.deny()
                         Toast.makeText(
                             this@MainActivity,
@@ -272,6 +289,10 @@ class MainActivity : Activity() {
                             it == PermissionRequest.RESOURCE_VIDEO_CAPTURE
                     }.toTypedArray()
                     if (resources.isEmpty()) {
+                        android.util.Log.w(
+                            "MajordomoMedia",
+                            "Denied media request: no supported resources. origin=${request.origin}, requested=${request.resources.joinToString()}"
+                        )
                         request.deny()
                         return@runOnUiThread
                     }
