@@ -446,7 +446,6 @@ class MainActivity : Activity() {
                     IntentIntegrator(this@MainActivity)
                         .setCaptureActivity(CaptureActivity::class.java)
                         .setDesiredBarcodeFormats("QR_CODE")
-                        .setPrompt("Наведите камеру на QR-код")
                         .setBeepEnabled(false)
                         .setOrientationLocked(false)
                         .initiateScan()
