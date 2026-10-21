@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<meta name="theme-color" content="#3f51b5">
+<meta name="theme-color" content="#111318">
 <title>Majordomo Message</title>
 <style>
-:root{color-scheme:light dark;--blue:#3f51b5;--bg:#f4f6fb;--ink:#202438;--muted:#6c7285;--card:#fff;--field:#fff;--border:#dce1ee;--row-border:#e8ebf3;--shadow:0 8px 28px #25336a12;--danger-bg:#fff;--danger-border:#f0d7d7;--danger-pressed:#fff0f0;--toast-bg:#292d3e;--toast-ink:#fff}
+:root{color-scheme:dark;--blue:#61dafb;--bg:#20232a;--ink:#f5f7fa;--muted:#aeb6c2;--card:#282c34;--field:#20232a;--border:#454b57;--row-border:#3b414c;--shadow:0 8px 28px #0005;--danger-bg:#30262a;--danger-border:#69424a;--danger-pressed:#493037;--toast-bg:#f5f7fa;--toast-ink:#20232a}
 *{box-sizing:border-box}
-html,body{margin:0;width:100%;height:100%;font-family:system-ui,-apple-system,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+html,body{margin:0;width:100%;height:100%;font-family:system-ui,-apple-system,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);color-scheme:dark}
 #home{min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px}
 .panel{width:min(100%,440px);margin:auto}
 .brand{font-size:27px;font-weight:750;letter-spacing:-.5px;text-align:center;color:var(--blue);margin-bottom:8px}
@@ -82,9 +82,8 @@ button:active{opacity:.8}
  const home=document.getElementById('home'), viewer=document.getElementById('viewer'), input=document.getElementById('url'), openBtn=document.getElementById('open'), recent=document.getElementById('recent'), message=document.getElementById('message'), site=document.getElementById('site'), loading=document.getElementById('loading'), toast=document.getElementById('toast');
  const scanQrBtn=document.getElementById('scan-qr');
  const colorScheme=window.matchMedia('(prefers-color-scheme: dark)');
- function applySystemTheme(){const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.content=colorScheme.matches?'#111318':'#3f51b5';}
+ function applySystemTheme(){const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.content='#111318';}
  applySystemTheme();
- if(colorScheme.addEventListener)colorScheme.addEventListener('change',applySystemTheme);else if(colorScheme.addListener)colorScheme.addListener(applySystemTheme);
  const KEY='majordomo_recent_urls';
  let retryTimer=null, toastTimer=null, currentUrl='';
  function readRecent(){try{return JSON.parse(localStorage.getItem(KEY)||'[]').filter(x=>typeof x==='string').slice(0,10)}catch(e){return []}}
