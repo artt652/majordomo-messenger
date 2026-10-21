@@ -3,6 +3,14 @@ package com.majordomo.messenger
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.media.MediaMuxer
+import android.media.MediaMetadataRetriever
+import android.view.Gravity
+import android.widget.SeekBar
+import android.widget.VideoView
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -921,17 +929,17 @@ class MainActivity : Activity() {
                 }
 
                 if (capturedUri != null) {
-                    // Prepare photos before handing them to WebView. Keep the original capture
-                    // until compression succeeds; video and other media are passed through.
-                    Thread {
-                        val uploadUri = prepareImageForUpload(capturedUri)
-                        runOnUiThread {
+                    prepareMediaForUpload(capturedUri) { uploadUri ->
+                        if (uploadUri != null) {
                             chooser?.onReceiveValue(arrayOf(uploadUri))
                             clearPendingCapture(deleteFile = uploadUri != capturedUri || capturedUri != outputUri)
-                            chooser = null
-                            pendingChooserParams = null
+                        } else {
+                            chooser?.onReceiveValue(null)
+                            clearPendingCapture(deleteFile = true)
                         }
-                    }.start()
+                        chooser = null
+                        pendingChooserParams = null
+                    }
                 } else {
                     // Some camera apps return RESULT_CANCELED or do not write the output URI.
                     // Fall back to the normal picker so the user can still select an existing file.
@@ -944,18 +952,298 @@ class MainActivity : Activity() {
                 if (result.isNullOrEmpty()) {
                     finishFileChooser(null)
                 } else {
-                    // Compress selected gallery photos too, not just pictures taken in-app.
-                    Thread {
-                        val prepared = result.map { uri -> prepareImageForUpload(uri) }.toTypedArray()
-                        runOnUiThread { finishFileChooser(prepared) }
-                    }.start()
+                    // Prepare selected images and oversized videos before returning them to WebView.
+                    prepareMediaBatch(result) { prepared ->
+                        finishFileChooser(prepared)
+                    }
                 }
             }
         }
     }
 
+
+    /**
+     * Prepare an item before returning it through WebView's file chooser.
+     * Photos keep the existing compression path; videos over the current page limit
+     * are sent to the native trimming dialog. Other files are untouched.
+     */
+    private fun prepareMediaForUpload(uri: Uri, callback: (Uri?) -> Unit) {
+        when {
+            isImageUri(uri) -> Thread {
+                val prepared = prepareImageForUpload(uri)
+                runOnUiThread { callback(prepared) }
+            }.start()
+            isVideoUri(uri) -> {
+                val size = getUriSize(uri)
+                if (size <= 0L || size <= MAX_UPLOAD_VIDEO_BYTES) {
+                    callback(uri)
+                } else {
+                    showVideoTrimDialog(uri, callback)
+                }
+            }
+            else -> callback(uri)
+        }
+    }
+
+    private fun prepareMediaBatch(uris: Array<Uri>, callback: (Array<Uri>?) -> Unit) {
+        val prepared = ArrayList<Uri>(uris.size)
+        fun next(index: Int) {
+            if (index >= uris.size) {
+                callback(prepared.toTypedArray())
+                return
+            }
+            prepareMediaForUpload(uris[index]) { uri ->
+                if (uri == null) {
+                    callback(null)
+                } else {
+                    prepared.add(uri)
+                    next(index + 1)
+                }
+            }
+        }
+        next(0)
+    }
+
+    private fun isVideoUri(uri: Uri): Boolean {
+        val mime = try { contentResolver.getType(uri) } catch (_: Exception) { null }
+        if (mime?.startsWith("video/", ignoreCase = true) == true) return true
+        val name = try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        } catch (_: Exception) { null }
+        val extension = (name ?: uri.lastPathSegment ?: "").substringAfterLast('.', "").lowercase()
+        return extension in setOf("mp4", "m4v", "mov", "3gp", "webm", "mkv")
+    }
+
+    private fun getUriSize(uri: Uri): Long {
+        try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                    val size = cursor.getLong(0)
+                    if (size > 0L) return size
+                }
+            }
+        } catch (_: Exception) { }
+        return try {
+            if (uri.scheme == "file") File(uri.path ?: return -1L).length() else -1L
+        } catch (_: Exception) { -1L }
+    }
+
+    private fun showVideoTrimDialog(uri: Uri, callback: (Uri?) -> Unit) {
+        val durationMs = try {
+            MediaMetadataRetriever().use { retriever ->
+                retriever.setDataSource(this, uri)
+                (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L)
+            }
+        } catch (_: Exception) { 0L }
+
+        if (durationMs < 1000L) {
+            Toast.makeText(this, "Не удалось определить длительность видео для обрезки", Toast.LENGTH_LONG).show()
+            callback(null)
+            return
+        }
+
+        val rootLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+        val preview = VideoView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(-1, dp(210))
+            setVideoURI(uri)
+            setOnPreparedListener { player ->
+                player.isLooping = true
+                start()
+            }
+        }
+        rootLayout.addView(preview)
+
+        val sizeMb = getUriSize(uri).toDouble() / (1024.0 * 1024.0)
+        val info = TextView(this).apply {
+            text = "Размер: %.1f МБ. Лимит: %.0f МБ. Выберите фрагмент видео.".format(
+                java.util.Locale.getDefault(), sizeMb, MAX_UPLOAD_VIDEO_BYTES / (1024.0 * 1024.0)
+            )
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        rootLayout.addView(info)
+
+        val startLabel = TextView(this).apply { text = "Начало: 00:00" }
+        val startBar = SeekBar(this).apply {
+            max = 1000
+            progress = 0
+        }
+        val endLabel = TextView(this).apply { text = "Конец: " + formatVideoTime(durationMs) }
+        val endBar = SeekBar(this).apply {
+            max = 1000
+            progress = 1000
+        }
+        rootLayout.addView(startLabel)
+        rootLayout.addView(startBar)
+        rootLayout.addView(endLabel)
+        rootLayout.addView(endBar)
+
+        var startMs = 0L
+        var endMs = durationMs
+        startBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                startMs = durationMs * progress / 1000L
+                if (startMs >= endMs - 1000L) {
+                    startMs = (endMs - 1000L).coerceAtLeast(0L)
+                    startBar.progress = (startMs * 1000L / durationMs).toInt()
+                }
+                startLabel.text = "Начало: " + formatVideoTime(startMs)
+                preview.seekTo(startMs.toInt())
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+        endBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                endMs = durationMs * progress / 1000L
+                if (endMs <= startMs + 1000L) {
+                    endMs = (startMs + 1000L).coerceAtMost(durationMs)
+                    endBar.progress = (endMs * 1000L / durationMs).toInt()
+                }
+                endLabel.text = "Конец: " + formatVideoTime(endMs)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Обрезка видео")
+            .setView(rootLayout)
+            .setNegativeButton("Отмена") { _, _ ->
+                preview.stopPlayback()
+                callback(null)
+            }
+            .setNeutralButton("Использовать целиком") { _, _ ->
+                preview.stopPlayback()
+                // This option is intentionally not a bypass: an oversized file must be trimmed.
+                showVideoTrimDialog(uri, callback)
+            }
+            .setPositiveButton("Обрезать") { _, _ ->
+                preview.stopPlayback()
+                Toast.makeText(this, "Обрезаем видео…", Toast.LENGTH_SHORT).show()
+                Thread {
+                    val output = try { trimVideo(uri, startMs, endMs) } catch (error: Exception) {
+                        addMediaDiagnostic("Обрезка видео не удалась: ${error.javaClass.simpleName}: ${error.message}")
+                        null
+                    }
+                    runOnUiThread {
+                        if (output == null) {
+                            Toast.makeText(this, "Не удалось обрезать видео. Попробуйте другой файл.", Toast.LENGTH_LONG).show()
+                            callback(null)
+                        } else {
+                            val outputUri = FileProvider.getUriForFile(this, "$packageName.fileprovider", output)
+                            if (output.length() > MAX_UPLOAD_VIDEO_BYTES) {
+                                Toast.makeText(this, "Фрагмент всё ещё больше лимита. Выберите более короткий.", Toast.LENGTH_LONG).show()
+                                showVideoTrimDialog(outputUri, callback)
+                            } else {
+                                callback(outputUri)
+                            }
+                        }
+                    }
+                }.start()
+            }
+            .create()
+        dialog.setOnDismissListener { preview.stopPlayback() }
+        dialog.show()
+    }
+
+    private fun trimVideo(uri: Uri, requestedStartMs: Long, requestedEndMs: Long): File {
+        val directory = File(cacheDir, "video-trim").apply { mkdirs() }
+        directory.listFiles()?.filter {
+            System.currentTimeMillis() - it.lastModified() > 24L * 60 * 60 * 1000
+        }?.forEach { it.delete() }
+        val output = File.createTempFile("trim_", ".mp4", directory)
+        var extractor: MediaExtractor? = null
+        var muxer: MediaMuxer? = null
+        var muxerStarted = false
+        try {
+            extractor = MediaExtractor()
+            extractor.setDataSource(this, uri, null)
+            val retriever = MediaMetadataRetriever()
+            val rotation = try {
+                retriever.setDataSource(this, uri)
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+            } finally {
+                retriever.release()
+            }
+            muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            if (rotation != 0) muxer.setOrientationHint(rotation)
+
+            val trackMap = HashMap<Int, Int>()
+            var videoTrackFound = false
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                if (mime.startsWith("video/") || mime.startsWith("audio/")) {
+                    val muxerTrack = muxer.addTrack(format)
+                    trackMap[i] = muxerTrack
+                    extractor.selectTrack(i)
+                    if (mime.startsWith("video/")) videoTrackFound = true
+                }
+            }
+            if (!videoTrackFound || trackMap.isEmpty()) throw IllegalArgumentException("No supported audio/video tracks")
+            muxer.start()
+            muxerStarted = true
+
+            val startUs = requestedStartMs * 1000L
+            val endUs = requestedEndMs * 1000L
+            extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            val firstSampleTime = extractor.sampleTime.coerceAtLeast(0L)
+            val buffer = java.nio.ByteBuffer.allocate(2 * 1024 * 1024)
+            val sampleInfo = MediaMuxer.BufferInfo()
+            while (true) {
+                val sourceTrack = extractor.sampleTrackIndex
+                if (sourceTrack < 0) break
+                val sampleTime = extractor.sampleTime
+                if (sampleTime > endUs) break
+                val outputTrack = trackMap[sourceTrack]
+                if (outputTrack != null) {
+                    buffer.clear()
+                    val sampleSize = extractor.readSampleData(buffer, 0)
+                    if (sampleSize < 0) break
+                    sampleInfo.set(
+                        0,
+                        sampleSize,
+                        (sampleTime - firstSampleTime).coerceAtLeast(0L),
+                        extractor.sampleFlags
+                    )
+                    muxer.writeSampleData(outputTrack, buffer, sampleInfo)
+                }
+                if (!extractor.advance()) break
+            }
+            muxer.stop()
+            muxerStarted = false
+            return output
+        } catch (error: Exception) {
+            output.delete()
+            throw error
+        } finally {
+            try { if (muxerStarted) muxer?.stop() } catch (_: Exception) {}
+            try { muxer?.release() } catch (_: Exception) {}
+            try { extractor?.release() } catch (_: Exception) {}
+        }
+    }
+
+    private fun formatVideoTime(ms: Long): String {
+        val totalSeconds = (ms / 1000L).coerceAtLeast(0L)
+        val hours = totalSeconds / 3600L
+        val minutes = (totalSeconds % 3600L) / 60L
+        val seconds = totalSeconds % 60L
+        return if (hours > 0) "%02d:%02d:%02d".format(hours, minutes, seconds)
+        else "%02d:%02d".format(minutes, seconds)
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
+
+
     private companion object {
         const val MAX_UPLOAD_PHOTO_BYTES = 1_800_000L
+        // Matches the current MajorDoMo media page's 50 MiB file/video limit.
+        const val MAX_UPLOAD_VIDEO_BYTES = 50L * 1024L * 1024L
         const val MAX_UPLOAD_PHOTO_DIMENSION = 1920
         const val MIN_UPLOAD_PHOTO_DIMENSION = 640
     }
