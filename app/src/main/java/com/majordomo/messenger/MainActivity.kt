@@ -51,6 +51,7 @@ class MainActivity : Activity() {
     @Volatile private var lastSuccessfulSiteUrl: String = ""
     private var offlineCacheFallbackInProgress = false
     private val permissionRequestCode = 301
+    private val qrCameraPermissionRequestCode = 302
     private val fileChooserCode = 401
     private val notificationPermissionRequestCode = 501
     private var pendingUnreadCount: Int? = null
@@ -63,8 +64,8 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         // Keep Android's system information row (time, battery, network) visible.
         WindowCompat.setDecorFitsSystemWindows(window, true)
-        window.statusBarColor = Color.rgb(48, 63, 159)
-        window.navigationBarColor = Color.BLACK
+        window.statusBarColor = Color.rgb(17, 19, 24)
+        window.navigationBarColor = Color.rgb(17, 19, 24)
         WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = false
 
         CookieManager.getInstance().setAcceptCookie(true)
@@ -331,6 +332,10 @@ class MainActivity : Activity() {
     }
 
     private fun showQrScanner() {
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.CAMERA), qrCameraPermissionRequestCode)
+            return
+        }
         val scanner = qrBarcodeView ?: return
         val overlay = qrScannerOverlay ?: return
         overlay.visibility = View.VISIBLE
@@ -554,6 +559,14 @@ class MainActivity : Activity() {
             pendingUnreadCount = null
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED && count != null) {
                 updateUnreadBadge(count)
+            }
+            return
+        }
+        if (requestCode == qrCameraPermissionRequestCode) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                showQrScanner()
+            } else {
+                Toast.makeText(this, "Для сканирования QR-кода нужен доступ к камере", Toast.LENGTH_LONG).show()
             }
             return
         }
