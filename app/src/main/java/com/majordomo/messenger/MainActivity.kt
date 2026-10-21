@@ -586,13 +586,10 @@ class MainActivity : Activity() {
             return
         }
         if (requestCode == permissionRequestCode) {
-            val missing = pendingAndroidPermissions.filter {
-                checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
-            }
-            if (missing.isNotEmpty() &&
-                grantResults.isNotEmpty() &&
-                grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                pendingAndroidPermissions = missing.drop(1)
+            val requestedPermission = pendingAndroidPermissions.firstOrNull()
+            if (requestedPermission != null &&
+                checkSelfPermission(requestedPermission) == PackageManager.PERMISSION_GRANTED) {
+                pendingAndroidPermissions = pendingAndroidPermissions.drop(1)
             } else {
                 pendingAndroidPermissions = emptyList()
             }
