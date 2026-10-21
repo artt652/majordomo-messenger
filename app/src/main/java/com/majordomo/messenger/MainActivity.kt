@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
@@ -1192,7 +1193,7 @@ class MainActivity : Activity() {
             extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
             val firstSampleTime = extractor.sampleTime.coerceAtLeast(0L)
             val buffer = java.nio.ByteBuffer.allocate(2 * 1024 * 1024)
-            val sampleInfo = MediaMuxer.BufferInfo()
+            val sampleInfo = MediaCodec.BufferInfo()
             while (true) {
                 val sourceTrack = extractor.sampleTrackIndex
                 if (sourceTrack < 0) break
