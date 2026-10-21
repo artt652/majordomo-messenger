@@ -163,6 +163,7 @@ class MainActivity : Activity() {
                 super.onPageFinished(view, url)
                 CookieManager.getInstance().flush()
                 if (view === site && !url.isNullOrBlank() && url.startsWith("http")) {
+                    installMediaJavaScriptDiagnostics(view)
                     if (offlineCacheFallbackInProgress) {
                         view.settings.cacheMode = WebSettings.LOAD_DEFAULT
                         offlineCacheFallbackInProgress = false
@@ -380,6 +381,75 @@ class MainActivity : Activity() {
                 return
             }
         }
+    }
+
+    private fun installMediaJavaScriptDiagnostics(view: WebView) {
+        val script = """
+            (function() {
+              try {
+                if (window.__majordomoMediaDiagInstalled) {
+                  console.log('[MediaDiag] instrumentation already installed');
+                  return;
+                }
+                window.__majordomoMediaDiagInstalled = true;
+                console.log('[MediaDiag] installed; url=' + location.href +
+                  '; secureContext=' + window.isSecureContext +
+                  '; mediaDevices=' + !!(navigator.mediaDevices) +
+                  '; getUserMedia=' + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+                if (navigator.permissions && navigator.permissions.query) {
+                  ['microphone', 'camera'].forEach(function(name) {
+                    navigator.permissions.query({name:name}).then(function(p) {
+                      console.log('[MediaDiag] permission ' + name + '=' + p.state);
+                      p.onchange = function() { console.log('[MediaDiag] permission changed ' + name + '=' + p.state); };
+                    }).catch(function(e) {
+                      console.log('[MediaDiag] permission query ' + name + ' failed: ' + e.name + ': ' + e.message);
+                    });
+                  });
+                }
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                  var originalGum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+                  navigator.mediaDevices.getUserMedia = function(constraints) {
+                    console.log('[MediaDiag] getUserMedia called; constraints=' + JSON.stringify(constraints));
+                    var started = Date.now();
+                    return originalGum(constraints).then(function(stream) {
+                      var tracks = stream.getTracks().map(function(t) {
+                        return {kind:t.kind, enabled:t.enabled, muted:t.muted, readyState:t.readyState, label:t.label};
+                      });
+                      console.log('[MediaDiag] getUserMedia SUCCESS after ' + (Date.now()-started) +
+                        'ms; tracks=' + JSON.stringify(tracks));
+                      stream.getTracks().forEach(function(t) {
+                        t.onended = function() { console.log('[MediaDiag] track ended; kind=' + t.kind); };
+                        t.onmute = function() { console.log('[MediaDiag] track muted; kind=' + t.kind); };
+                        t.onunmute = function() { console.log('[MediaDiag] track unmuted; kind=' + t.kind); };
+                      });
+                      return stream;
+                    }).catch(function(e) {
+                      console.log('[MediaDiag] getUserMedia FAILED after ' + (Date.now()-started) +
+                        'ms; name=' + e.name + '; message=' + e.message + '; constraint=' + (e.constraint || ''));
+                      throw e;
+                    });
+                  };
+                }
+                if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                  navigator.mediaDevices.enumerateDevices().then(function(devices) {
+                    console.log('[MediaDiag] enumerateDevices=' + JSON.stringify(devices.map(function(d) {
+                      return {kind:d.kind, label:d.label, deviceIdPresent:!!d.deviceId};
+                    })));
+                  }).catch(function(e) {
+                    console.log('[MediaDiag] enumerateDevices FAILED: ' + e.name + ': ' + e.message);
+                  });
+                }
+                window.addEventListener('unhandledrejection', function(event) {
+                  var e = event.reason || {};
+                  console.log('[MediaDiag] unhandledrejection: ' + (e.name || '') + ': ' + (e.message || String(event.reason)));
+                });
+              } catch (e) {
+                console.log('[MediaDiag] instrumentation ERROR: ' + e.name + ': ' + e.message);
+              }
+            })();
+        """.trimIndent()
+        view.evaluateJavascript(script, null)
+        addMediaDiagnostic("Установлена JS-диагностика страницы: ${view.url}".replace("$", "$"))
     }
 
     private fun addMediaDiagnostic(message: String) {
