@@ -33,13 +33,17 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.app.NotificationCompat
-import com.google.zxing.integration.android.IntentIntegrator
-import com.journeyapps.barcodescanner.CaptureActivity
+import com.google.zxing.ResultPoint
+import com.journeyapps.barcodescanner.BarcodeCallback
+import com.journeyapps.barcodescanner.BarcodeResult
+import com.journeyapps.barcodescanner.DecoratedBarcodeView
 
 class MainActivity : Activity() {
     private lateinit var launcher: WebView
     private lateinit var site: WebView
     private lateinit var root: FrameLayout
+    private var qrScannerOverlay: FrameLayout? = null
+    private var qrBarcodeView: DecoratedBarcodeView? = null
     private var chooser: ValueCallback<Array<Uri>>? = null
     private var pendingRequest: PermissionRequest? = null
     private var pendingResources = emptyArray<String>()
@@ -86,6 +90,7 @@ class MainActivity : Activity() {
         CookieManager.getInstance().setAcceptThirdPartyCookies(site, true)
 
         launcher.addJavascriptInterface(PageBridge(), "MajordomoApp")
+        launcher.webChromeClient = createMediaWebChromeClient()
         launcher.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url
@@ -151,55 +156,7 @@ class MainActivity : Activity() {
             }
         }
 
-        site.webChromeClient = object : WebChromeClient() {
-            override fun onReceivedTitle(view: WebView, title: String?) {
-                super.onReceivedTitle(view, title)
-                if (!title.isNullOrBlank()) {
-                    val unread = parseUnreadCount(title)
-                    updateUnreadBadge(unread)
-                }
-            }
-
-            override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
-                chooser?.onReceiveValue(null)
-                chooser = callback
-                return try {
-                    startActivityForResult(params.createIntent(), fileChooserCode)
-                    true
-                } catch (_: Exception) {
-                    chooser = null
-                    false
-                }
-            }
-
-            override fun onPermissionRequest(request: PermissionRequest) {
-                runOnUiThread {
-                    val resources = request.resources.filter {
-                        it == PermissionRequest.RESOURCE_AUDIO_CAPTURE || it == PermissionRequest.RESOURCE_VIDEO_CAPTURE
-                    }.toTypedArray()
-                    if (resources.isEmpty()) { request.deny(); return@runOnUiThread }
-                    val needed = mutableListOf<String>()
-                    if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in resources &&
-                        checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                        needed.add(Manifest.permission.CAMERA)
-                    }
-                    if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in resources &&
-                        checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                        needed.add(Manifest.permission.RECORD_AUDIO)
-                    }
-                    if (needed.isEmpty()) request.grant(resources)
-                    else {
-                        pendingRequest = request
-                        pendingResources = resources
-                        requestPermissions(needed.toTypedArray(), permissionRequestCode)
-                    }
-                }
-            }
-
-            override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
-                callback.invoke(origin, false, false)
-            }
-        }
+        site.webChromeClient = createMediaWebChromeClient()
 
         site.setDownloadListener(DownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
             try {
@@ -219,6 +176,7 @@ class MainActivity : Activity() {
 
         root.addView(launcher, FrameLayout.LayoutParams(-1, -1))
         root.addView(site, FrameLayout.LayoutParams(-1, -1))
+        createQrScannerOverlay()
         site.visibility = View.GONE
         setContentView(root)
 
@@ -245,7 +203,7 @@ class MainActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled")
     @Suppress("DEPRECATION") // Keep legacy WebView database setting for older WebView versions.
     private fun configureWebView(view: WebView) {
-        view.setBackgroundColor(Color.WHITE)
+        view.setBackgroundColor(Color.rgb(24, 26, 32))
         view.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -262,6 +220,141 @@ class MainActivity : Activity() {
             allowContentAccess = true
             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         }
+    }
+
+    private fun createMediaWebChromeClient(): WebChromeClient {
+        return object : WebChromeClient() {
+            override fun onReceivedTitle(view: WebView, title: String?) {
+                super.onReceivedTitle(view, title)
+                if (!title.isNullOrBlank()) updateUnreadBadge(parseUnreadCount(title))
+            }
+
+            override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+                chooser?.onReceiveValue(null)
+                chooser = callback
+                return try {
+                    startActivityForResult(params.createIntent(), fileChooserCode)
+                    true
+                } catch (_: Exception) {
+                    chooser = null
+                    false
+                }
+            }
+
+            override fun onPermissionRequest(request: PermissionRequest) {
+                runOnUiThread {
+                    // Chromium only permits getUserMedia on secure origins (normally HTTPS).
+                    if (Uri.parse(request.origin.toString()).scheme != "https") {
+                        request.deny()
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Для микрофона и камеры откройте сервер по HTTPS. Android WebView блокирует их на обычном HTTP.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        return@runOnUiThread
+                    }
+                    val resources = request.resources.filter {
+                        it == PermissionRequest.RESOURCE_AUDIO_CAPTURE ||
+                            it == PermissionRequest.RESOURCE_VIDEO_CAPTURE
+                    }.toTypedArray()
+                    if (resources.isEmpty()) {
+                        request.deny()
+                        return@runOnUiThread
+                    }
+                    val needed = mutableListOf<String>()
+                    if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in resources &&
+                        checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                        needed.add(Manifest.permission.CAMERA)
+                    }
+                    if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in resources &&
+                        checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                        needed.add(Manifest.permission.RECORD_AUDIO)
+                    }
+                    if (needed.isEmpty()) request.grant(resources)
+                    else {
+                        pendingRequest?.deny()
+                        pendingRequest = request
+                        pendingResources = resources
+                        requestPermissions(needed.toTypedArray(), permissionRequestCode)
+                    }
+                }
+            }
+
+            override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
+                callback.invoke(origin, false, false)
+            }
+        }
+    }
+
+    private fun createQrScannerOverlay() {
+        val overlay = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(220, 8, 10, 14))
+            visibility = View.GONE
+            isClickable = true
+        }
+        val card = FrameLayout(this).apply {
+            setBackgroundColor(Color.rgb(28, 30, 36))
+            elevation = 12f
+        }
+        val scanner = DecoratedBarcodeView(this).apply {
+            setStatusText("Наведите камеру на QR-код")
+            setBackgroundColor(Color.BLACK)
+        }
+        qrBarcodeView = scanner
+
+        val cancel = android.widget.Button(this).apply {
+            text = "Закрыть"
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.rgb(55, 58, 68))
+            setOnClickListener { hideQrScanner() }
+        }
+        card.addView(scanner, FrameLayout.LayoutParams(-1, 0).apply {
+            height = (resources.displayMetrics.density * 360).toInt()
+            gravity = android.view.Gravity.TOP
+        })
+        card.addView(cancel, FrameLayout.LayoutParams(-1, (resources.displayMetrics.density * 48).toInt()).apply {
+            gravity = android.view.Gravity.BOTTOM
+            leftMargin = (resources.displayMetrics.density * 12).toInt()
+            rightMargin = (resources.displayMetrics.density * 12).toInt()
+            bottomMargin = (resources.displayMetrics.density * 10).toInt()
+        })
+        val cardParams = FrameLayout.LayoutParams(-1, (resources.displayMetrics.density * 430).toInt()).apply {
+            gravity = android.view.Gravity.CENTER
+            leftMargin = (resources.displayMetrics.density * 24).toInt()
+            rightMargin = (resources.displayMetrics.density * 24).toInt()
+        }
+        overlay.addView(card, cardParams)
+        overlay.setOnClickListener { hideQrScanner() }
+        card.setOnClickListener { /* Keep taps inside the scanner card from closing it. */ }
+        root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
+        qrScannerOverlay = overlay
+    }
+
+    private fun showQrScanner() {
+        val scanner = qrBarcodeView ?: return
+        val overlay = qrScannerOverlay ?: return
+        overlay.visibility = View.VISIBLE
+        scanner.resume()
+        scanner.decodeSingle(object : BarcodeCallback {
+            override fun barcodeResult(result: BarcodeResult?) {
+                val value = result?.text?.takeIf { it.isNotBlank() } ?: return
+                runOnUiThread {
+                    hideQrScanner()
+                    launcher.evaluateJavascript(
+                        "window.majordomoQrResult && window.majordomoQrResult(" +
+                            org.json.JSONObject.quote(value) + ")",
+                        null
+                    )
+                }
+            }
+
+            override fun possibleResultPoints(resultPoints: MutableList<ResultPoint>?) = Unit
+        })
+    }
+
+    private fun hideQrScanner() {
+        qrBarcodeView?.pause()
+        qrScannerOverlay?.visibility = View.GONE
     }
 
     private fun createUnreadNotificationChannel() {
@@ -441,40 +534,12 @@ class MainActivity : Activity() {
 
         @android.webkit.JavascriptInterface
         fun scanQr() {
-            runOnUiThread {
-                try {
-                    IntentIntegrator(this@MainActivity)
-                        .setCaptureActivity(CaptureActivity::class.java)
-                        .setDesiredBarcodeFormats("QR_CODE")
-                        .setBeepEnabled(false)
-                        .setOrientationLocked(false)
-                        .initiateScan()
-                } catch (error: Exception) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Не удалось запустить сканер QR-кода: ${error.localizedMessage ?: "ошибка"}",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
+            runOnUiThread { showQrScanner() }
         }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-
-        val scanResult = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
-        if (scanResult != null) {
-            val contents = scanResult.contents
-            if (!contents.isNullOrBlank()) {
-                launcher.evaluateJavascript(
-                    "window.majordomoQrResult && window.majordomoQrResult(" +
-                        org.json.JSONObject.quote(contents) + ")",
-                    null
-                )
-            }
-            return
-        }
 
         if (requestCode == fileChooserCode) {
             chooser?.onReceiveValue(if (resultCode == RESULT_OK) WebChromeClient.FileChooserParams.parseResult(resultCode, data) else null)
