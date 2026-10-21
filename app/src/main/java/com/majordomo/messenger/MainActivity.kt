@@ -449,7 +449,7 @@ class MainActivity : Activity() {
             })();
         """.trimIndent()
         view.evaluateJavascript(script, null)
-        addMediaDiagnostic("Установлена JS-диагностика страницы: ${view.url}".replace("$", "$"))
+        addMediaDiagnostic("Установлена JS-диагностика страницы: " + (view.url ?: "(URL неизвестен)"))
     }
 
     private fun addMediaDiagnostic(message: String) {
