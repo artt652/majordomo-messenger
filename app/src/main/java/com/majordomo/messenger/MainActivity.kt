@@ -78,6 +78,10 @@ class MainActivity : Activity() {
     private var chooser: ValueCallback<Array<Uri>>? = null
     private var pendingChooserParams: WebChromeClient.FileChooserParams? = null
     private var pendingUploadLimitBytes: Long? = null
+    private var pendingNativeVoiceRecording = false
+    private var activeVoiceRecorder: MediaRecorder? = null
+    private var activeVoiceFile: File? = null
+    private var activeVoiceDialog: AlertDialog? = null
     private var pendingCaptureUri: Uri? = null
     private var pendingCaptureFile: File? = null
     private data class PendingMediaRequest(
@@ -97,6 +101,7 @@ class MainActivity : Activity() {
     private val fileChooserCode = 401
     private val cameraCaptureCode = 402
     private val notificationPermissionRequestCode = 501
+    private val voiceRecordingPermissionRequestCode = 303
     private var pendingUnreadCount: Int? = null
     private val unreadNotificationId = 7301
     private val unreadChannelId = "majordomo_unread_messages"
@@ -192,6 +197,7 @@ class MainActivity : Activity() {
                 CookieManager.getInstance().flush()
                 if (view === site && !url.isNullOrBlank() && url.startsWith("http")) {
                     installMediaJavaScriptDiagnostics(view)
+                    installNativeVoiceRecordingHook(view)
                     if (offlineCacheFallbackInProgress) {
                         view.settings.cacheMode = WebSettings.LOAD_DEFAULT
                         offlineCacheFallbackInProgress = false
@@ -289,6 +295,11 @@ class MainActivity : Activity() {
                 pendingChooserParams = params
                 resolveUploadLimitBytes(view) { limitBytes ->
                     pendingUploadLimitBytes = limitBytes
+                    if (pendingNativeVoiceRecording) {
+                        pendingNativeVoiceRecording = false
+                        startNativeVoiceRecording()
+                        return@resolveUploadLimitBytes
+                    }
                     if (params.isCaptureEnabled) {
                         val mime = captureMimeType(params.acceptTypes)
                         if (mime != null && launchCameraCapture(mime)) return@resolveUploadLimitBytes
@@ -915,6 +926,202 @@ class MainActivity : Activity() {
         fun scanQr() {
             runOnUiThread { showQrScanner() }
         }
+
+        @android.webkit.JavascriptInterface
+        fun startNativeVoiceRecording() {
+            runOnUiThread { requestNativeVoiceRecording() }
+        }
+    }
+
+    private fun requestNativeVoiceRecording() {
+        if (site.visibility != View.VISIBLE) return
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), voiceRecordingPermissionRequestCode)
+            return
+        }
+        requestAudioFileChooser()
+    }
+
+    /**
+     * Open the page's existing file input, but route its chooser callback to the native recorder.
+     * This lets the site's own input/change handler upload the resulting file as usual.
+     */
+    private fun requestAudioFileChooser() {
+        if (site.visibility != View.VISIBLE) {
+            Toast.makeText(this, "Сначала откройте чат MajorDoMo", Toast.LENGTH_SHORT).show()
+            return
+        }
+        pendingNativeVoiceRecording = true
+        site.evaluateJavascript(
+            "window.__majordomoTriggerAudioFileSelection && window.__majordomoTriggerAudioFileSelection()"
+        ) { result ->
+            if (result != "true" && pendingNativeVoiceRecording) {
+                pendingNativeVoiceRecording = false
+                Toast.makeText(this, "Не найден элемент выбора файла на странице. Запись не запущена.", Toast.LENGTH_LONG).show()
+                addMediaDiagnostic("NativeVoice: на странице не найден input[type=file] для передачи записи")
+            }
+        }
+    }
+
+    private fun startNativeVoiceRecording() {
+        if (chooser == null) {
+            Toast.makeText(this, "Страница не подготовила загрузку голосового сообщения", Toast.LENGTH_LONG).show()
+            addMediaDiagnostic("NativeVoice: chooser callback отсутствует")
+            return
+        }
+
+        val directory = File(cacheDir, "voice-recordings").apply { mkdirs() }
+        directory.listFiles()?.filter {
+            System.currentTimeMillis() - it.lastModified() > 24L * 60 * 60 * 1000
+        }?.forEach { it.delete() }
+
+        val output = try {
+            File.createTempFile("voice_", ".m4a", directory)
+        } catch (error: Exception) {
+            addMediaDiagnostic("NativeVoice: не удалось создать файл: \${error.message}")
+            finishFileChooser(null)
+            return
+        }
+
+        val recorder = try {
+            val instance = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(this) else MediaRecorder()
+            instance.setAudioSource(MediaRecorder.AudioSource.MIC)
+            instance.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            instance.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            instance.setAudioSamplingRate(16000)
+            instance.setAudioEncodingBitRate(24000)
+            instance.setAudioChannels(1)
+            instance.setOutputFile(output.absolutePath)
+            instance.prepare()
+            instance.start()
+            instance
+        } catch (error: Exception) {
+            output.delete()
+            addMediaDiagnostic("NativeVoice: запуск записи не удался: \${error.javaClass.simpleName}: \${error.message}")
+            Toast.makeText(this, "Не удалось начать запись голосового сообщения", Toast.LENGTH_LONG).show()
+            finishFileChooser(null)
+            return
+        }
+
+        activeVoiceRecorder = recorder
+        activeVoiceFile = output
+        addMediaDiagnostic("NativeVoice: запись началась, формат AAC/M4A, mono, 16 kHz, 24 kbps")
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Голосовое сообщение")
+            .setMessage("Идёт запись. Нажмите «Готово», чтобы передать сообщение в чат.")
+            .setPositiveButton("Готово", null)
+            .setNegativeButton("Отмена") { _, _ -> finishNativeVoiceRecording(false) }
+            .create()
+        activeVoiceDialog = dialog
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                finishNativeVoiceRecording(true)
+            }
+        }
+        dialog.setOnCancelListener { finishNativeVoiceRecording(false) }
+        dialog.show()
+    }
+
+    private fun finishNativeVoiceRecording(save: Boolean) {
+        val recorder = activeVoiceRecorder
+        val output = activeVoiceFile
+        activeVoiceRecorder = null
+        activeVoiceFile = null
+        val dialog = activeVoiceDialog
+        activeVoiceDialog = null
+        try { recorder?.stop() } catch (error: Exception) {
+            addMediaDiagnostic("NativeVoice: stop завершился ошибкой: \${error.javaClass.simpleName}: \${error.message}")
+        } finally {
+            try { recorder?.reset() } catch (_: Exception) {}
+            try { recorder?.release() } catch (_: Exception) {}
+        }
+        dialog?.setOnCancelListener(null)
+        dialog?.dismiss()
+
+        if (!save || output == null || !output.exists() || output.length() <= 0L) {
+            output?.delete()
+            finishFileChooser(null)
+            addMediaDiagnostic("NativeVoice: запись отменена или получен пустой файл")
+            return
+        }
+
+        val limit = pendingUploadLimitBytes
+        if (limit != null && output.length() > limit) {
+            output.delete()
+            Toast.makeText(this, "Запись превышает лимит загрузки страницы. Запишите более короткое сообщение.", Toast.LENGTH_LONG).show()
+            addMediaDiagnostic("NativeVoice: файл \${output.length()} байт превышает лимит $limit")
+            finishFileChooser(null)
+            return
+        }
+
+        val uri = try {
+            FileProvider.getUriForFile(this, "$packageName.fileprovider", output)
+        } catch (error: Exception) {
+            output.delete()
+            addMediaDiagnostic("NativeVoice: FileProvider error: \${error.message}")
+            finishFileChooser(null)
+            return
+        }
+        addMediaDiagnostic("NativeVoice: готов файл \${output.length()} байт; передаём через штатный file chooser")
+        finishFileChooser(arrayOf(uri))
+    }
+
+    /**
+     * Install a narrow click hook for common microphone/voice controls. The native recorder
+     * then returns its M4A through the existing file input, so the site's upload handler remains
+     * responsible for sending the message.
+     */
+    private fun installNativeVoiceRecordingHook(view: WebView) {
+        val script = """
+            (function() {
+              try {
+                if (window.__majordomoNativeVoiceHookInstalled) return;
+                window.__majordomoNativeVoiceHookInstalled = true;
+                window.__majordomoTriggerAudioFileSelection = function() {
+                  var inputs = Array.prototype.slice.call(document.querySelectorAll('input[type="file"]'));
+                  var input = inputs.find(function(el) { return /audio|voice|sound/i.test(el.accept || ''); });
+                  if (!input) input = inputs.find(function(el) { return !/image|video/i.test(el.accept || ''); });
+                  if (!input) input = inputs[0];
+                  if (!input) return false;
+                  input.click();
+                  return true;
+                };
+                document.addEventListener('click', function(event) {
+                  var target = event.target;
+                  if (!target || !target.closest) return;
+                  var control = target.closest('button,[role="button"],input[type="button"],input[type="submit"],a');
+                  if (!control) return;
+                  var text = [
+                    control.getAttribute('aria-label') || '',
+                    control.getAttribute('title') || '',
+                    control.id || '',
+                    typeof control.className === 'string' ? control.className : '',
+                    control.textContent || ''
+                  ].join(' ');
+                  var icon = control.querySelector('svg');
+                  if (icon) text += ' ' + [
+                    icon.getAttribute('class') || '',
+                    icon.getAttribute('aria-label') || '',
+                    icon.getAttribute('data-icon') || ''
+                  ].join(' ');
+                  if (!/(microphone|\\bmic\\b|voice|record|диктофон|голос|запис|микрофон)/i.test(text)) return;
+                  if (/(send|отправ|upload|загруз)/i.test(text)) return;
+                  if (!window.MajordomoApp || typeof window.MajordomoApp.startNativeVoiceRecording !== 'function') return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+                  console.log('[NativeVoice] microphone control intercepted; starting native recorder');
+                  window.MajordomoApp.startNativeVoiceRecording();
+                }, true);
+                console.log('[NativeVoice] hook installed');
+              } catch (e) {
+                console.log('[NativeVoice] hook error: ' + e.name + ': ' + e.message);
+              }
+            })();
+        """.trimIndent()
+        view.evaluateJavascript(script, null)
+        addMediaDiagnostic("Установлен перехватчик кнопки голосовой записи: \${view.url ?: "(URL неизвестен)"}")
     }
 
     /**
@@ -1539,6 +1746,14 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == voiceRecordingPermissionRequestCode) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                requestAudioFileChooser()
+            } else {
+                Toast.makeText(this, "Для записи голосового сообщения нужен доступ к микрофону", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
         if (requestCode == notificationPermissionRequestCode) {
             val count = pendingUnreadCount
             pendingUnreadCount = null
