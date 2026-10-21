@@ -33,7 +33,9 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.app.NotificationCompat
-import com.google.zxing.integration.android.IntentIntegrator
+import com.google.android.gms.code.scanner.GmsBarcodeScannerOptions
+import com.google.android.gms.code.scanner.GmsBarcodeScanning
+import com.google.mlkit.vision.barcode.common.Barcode
 
 class MainActivity : Activity() {
     private lateinit var launcher: WebView
@@ -442,14 +444,38 @@ class MainActivity : Activity() {
         fun scanQr() {
             runOnUiThread {
                 try {
-                    IntentIntegrator(this@MainActivity)
-                        .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
-                        .setPrompt("Наведите камеру на QR-код со ссылкой")
-                        .setBeepEnabled(false)
-                        .setOrientationLocked(false)
-                        .initiateScan()
-                } catch (_: Exception) {
-                    Toast.makeText(this@MainActivity, "Не удалось запустить сканер QR-кода", Toast.LENGTH_LONG).show()
+                    val options = GmsBarcodeScannerOptions.Builder()
+                        .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                        .enableAutoZoom()
+                        .build()
+                    val scanner = GmsBarcodeScanning.getClient(this@MainActivity, options)
+                    scanner.startScan()
+                        .addOnSuccessListener { barcode ->
+                            val contents = barcode.rawValue
+                            if (!contents.isNullOrBlank()) {
+                                launcher.evaluateJavascript(
+                                    "window.majordomoQrResult && window.majordomoQrResult(" +
+                                        org.json.JSONObject.quote(contents) + ")",
+                                    null
+                                )
+                            }
+                        }
+                        .addOnCanceledListener {
+                            // The user closed the scanner without choosing a QR code.
+                        }
+                        .addOnFailureListener { error ->
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Не удалось запустить сканер QR-кода: ${error.localizedMessage ?: "ошибка"}",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                } catch (error: Exception) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Не удалось запустить сканер QR-кода: ${error.localizedMessage ?: "ошибка"}",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             }
         }
@@ -457,18 +483,6 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        val scanResult = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
-        if (scanResult != null) {
-            val contents = scanResult.contents
-            if (!contents.isNullOrBlank()) {
-                launcher.evaluateJavascript(
-                    "window.majordomoQrResult && window.majordomoQrResult(" +
-                        org.json.JSONObject.quote(contents) + ")",
-                    null
-                )
-            }
-            return
-        }
         if (requestCode == fileChooserCode) {
             chooser?.onReceiveValue(if (resultCode == RESULT_OK) WebChromeClient.FileChooserParams.parseResult(resultCode, data) else null)
             chooser = null
