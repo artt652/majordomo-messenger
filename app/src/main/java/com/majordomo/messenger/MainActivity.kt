@@ -71,6 +71,7 @@ class MainActivity : Activity() {
     private lateinit var site: WebView
     private lateinit var root: FrameLayout
     private var mediaDiagnosticsPanel: LinearLayout? = null
+    private var mediaDiagnosticsToggleButton: Button? = null
     private var mediaDiagnosticsText: TextView? = null
     private val mediaDiagnosticsLines = java.util.ArrayDeque<String>()
     private var qrScannerOverlay: FrameLayout? = null
@@ -660,6 +661,7 @@ class MainActivity : Activity() {
 
         val toggle = Button(this).apply {
             text = "Диагностика"
+            visibility = View.GONE
             setOnClickListener {
                 panel.visibility = if (panel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                 if (panel.visibility == View.VISIBLE) {
@@ -668,10 +670,17 @@ class MainActivity : Activity() {
             }
             elevation = 35f
         }
+        mediaDiagnosticsToggleButton = toggle
         root.addView(toggle, FrameLayout.LayoutParams(-2, -2, android.view.Gravity.TOP or android.view.Gravity.END).apply {
             topMargin = (8 * density).toInt()
             marginEnd = (8 * density).toInt()
         })
+    }
+
+    private fun updateMediaDiagnosticsVisibility(enabled: Boolean) {
+        mediaDiagnosticsToggleButton?.visibility = if (enabled) View.VISIBLE else View.GONE
+        if (!enabled) mediaDiagnosticsPanel?.visibility = View.GONE
+        addMediaDiagnostic("Диагностика " + (if (enabled) "включена" else "отключена") + " на главной странице")
     }
 
     private fun createQrScannerOverlay() {
@@ -932,6 +941,11 @@ class MainActivity : Activity() {
         @android.webkit.JavascriptInterface
         fun startNativeVoiceRecording() {
             runOnUiThread { requestNativeVoiceRecording() }
+        }
+
+        @android.webkit.JavascriptInterface
+        fun setMediaDiagnosticsEnabled(enabled: Boolean) {
+            runOnUiThread { updateMediaDiagnosticsVisibility(enabled) }
         }
     }
 
