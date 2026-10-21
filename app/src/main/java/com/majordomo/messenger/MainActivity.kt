@@ -15,6 +15,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.database.Cursor
+import android.provider.OpenableColumns
+import androidx.exifinterface.media.ExifInterface
+import java.io.ByteArrayOutputStream
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
@@ -914,10 +921,17 @@ class MainActivity : Activity() {
                 }
 
                 if (capturedUri != null) {
-                    chooser?.onReceiveValue(arrayOf(capturedUri))
-                    clearPendingCapture(deleteFile = capturedUri != outputUri)
-                    chooser = null
-                    pendingChooserParams = null
+                    // Prepare photos before handing them to WebView. Keep the original capture
+                    // until compression succeeds; video and other media are passed through.
+                    Thread {
+                        val uploadUri = prepareImageForUpload(capturedUri)
+                        runOnUiThread {
+                            chooser?.onReceiveValue(arrayOf(uploadUri))
+                            clearPendingCapture(deleteFile = uploadUri != capturedUri || capturedUri != outputUri)
+                            chooser = null
+                            pendingChooserParams = null
+                        }
+                    }.start()
                 } else {
                     // Some camera apps return RESULT_CANCELED or do not write the output URI.
                     // Fall back to the normal picker so the user can still select an existing file.
@@ -927,8 +941,169 @@ class MainActivity : Activity() {
             }
             fileChooserCode -> {
                 val result = if (resultCode == RESULT_OK) WebChromeClient.FileChooserParams.parseResult(resultCode, data) else null
-                finishFileChooser(result)
+                if (result.isNullOrEmpty()) {
+                    finishFileChooser(null)
+                } else {
+                    // Compress selected gallery photos too, not just pictures taken in-app.
+                    Thread {
+                        val prepared = result.map { uri -> prepareImageForUpload(uri) }.toTypedArray()
+                        runOnUiThread { finishFileChooser(prepared) }
+                    }.start()
+                }
             }
+        }
+    }
+
+    private companion object {
+        const val MAX_UPLOAD_PHOTO_BYTES = 1_800_000L
+        const val MAX_UPLOAD_PHOTO_DIMENSION = 1920
+        const val MIN_UPLOAD_PHOTO_DIMENSION = 640
+    }
+
+    /**
+     * Return a cache-backed JPEG URI for images that can be decoded. Non-images and
+     * any image that cannot be processed are returned unchanged to avoid breaking uploads.
+     */
+    private fun prepareImageForUpload(uri: Uri): Uri {
+        if (!isImageUri(uri)) return uri
+
+        var decoded: Bitmap? = null
+        var oriented: Bitmap? = null
+        var working: Bitmap? = null
+        try {
+            val directory = File(cacheDir, "camera-capture").apply { mkdirs() }
+            // Cache is temporary; remove prepared photos older than a day.
+            directory.listFiles()?.filter {
+                it.name.startsWith("upload_") && System.currentTimeMillis() - it.lastModified() > 24L * 60 * 60 * 1000
+            }?.forEach { it.delete() }
+
+            val orientation = try {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    ExifInterface(input).getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL
+                    )
+                } ?: ExifInterface.ORIENTATION_NORMAL
+            } catch (_: Exception) {
+                ExifInterface.ORIENTATION_NORMAL
+            }
+
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return uri
+
+            val sample = calculateInSampleSize(bounds.outWidth, bounds.outHeight, MAX_UPLOAD_PHOTO_DIMENSION)
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            decoded = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+                ?: return uri
+            oriented = orientBitmap(decoded!!, orientation)
+            if (oriented !== decoded) decoded?.recycle()
+            decoded = null
+            working = oriented
+            oriented = null
+
+            // First cap dimensions, then lower JPEG quality; if still oversized, scale
+            // down gradually until the result fits the server's 2 MB limit with margin.
+            working = scaleToMaxDimension(working!!, MAX_UPLOAD_PHOTO_DIMENSION)
+            var bytes: ByteArray
+            var quality: Int
+            while (true) {
+                quality = 88
+                bytes = ByteArrayOutputStream().use { output ->
+                    while (true) {
+                        output.reset()
+                        working!!.compress(Bitmap.CompressFormat.JPEG, quality, output)
+                        if (output.size().toLong() <= MAX_UPLOAD_PHOTO_BYTES || quality <= 50) break
+                        quality -= 7
+                    }
+                    output.toByteArray()
+                }
+                if (bytes.size.toLong() <= MAX_UPLOAD_PHOTO_BYTES) break
+                val current = working!!
+                val nextWidth = (current.width * 0.85f).toInt().coerceAtLeast(1)
+                val nextHeight = (current.height * 0.85f).toInt().coerceAtLeast(1)
+                if (current.width <= MIN_UPLOAD_PHOTO_DIMENSION && current.height <= MIN_UPLOAD_PHOTO_DIMENSION) {
+                    // Very unusual image; return original rather than produce an oversized result.
+                    return uri
+                }
+                val smaller = Bitmap.createScaledBitmap(current, nextWidth, nextHeight, true)
+                if (smaller !== current) current.recycle()
+                working = smaller
+            }
+
+            val outputFile = File.createTempFile("upload_", ".jpg", directory)
+            outputFile.outputStream().use { it.write(bytes) }
+            return FileProvider.getUriForFile(this, "$packageName.fileprovider", outputFile)
+        } catch (error: Exception) {
+            addMediaDiagnostic("Фото не удалось сжать, отправляем оригинал: ${error.javaClass.simpleName}")
+            return uri
+        } finally {
+            decoded?.recycle()
+            oriented?.recycle()
+            working?.recycle()
+        }
+    }
+
+    private fun isImageUri(uri: Uri): Boolean {
+        val mime = try { contentResolver.getType(uri) } catch (_: Exception) { null }
+        if (mime?.startsWith("image/", ignoreCase = true) == true) return true
+        val name = try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        } catch (_: Exception) { null }
+        val extension = (name ?: uri.lastPathSegment ?: "").substringAfterLast('.', "").lowercase()
+        return extension in setOf("jpg", "jpeg", "png", "webp", "heic", "heif", "bmp", "gif")
+    }
+
+    private fun calculateInSampleSize(width: Int, height: Int, maxDimension: Int): Int {
+        var sample = 1
+        while (width / (sample * 2) >= maxDimension && height / (sample * 2) >= maxDimension) {
+            sample *= 2
+        }
+        while (maxOf(width / sample, height / sample) > maxDimension * 2) sample *= 2
+        return sample.coerceAtLeast(1)
+    }
+
+    private fun scaleToMaxDimension(bitmap: Bitmap, maxDimension: Int): Bitmap {
+        val largest = maxOf(bitmap.width, bitmap.height)
+        if (largest <= maxDimension) return bitmap
+        val ratio = maxDimension.toFloat() / largest
+        val scaled = Bitmap.createScaledBitmap(
+            bitmap,
+            (bitmap.width * ratio).toInt().coerceAtLeast(1),
+            (bitmap.height * ratio).toInt().coerceAtLeast(1),
+            true
+        )
+        if (scaled !== bitmap) bitmap.recycle()
+        return scaled
+    }
+
+    private fun orientBitmap(bitmap: Bitmap, orientation: Int): Bitmap {
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> {
+                matrix.postScale(-1f, 1f)
+                matrix.postRotate(90f)
+            }
+            ExifInterface.ORIENTATION_TRANSVERSE -> {
+                matrix.postScale(-1f, 1f)
+                matrix.postRotate(270f)
+            }
+            else -> return bitmap
+        }
+        return try {
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        } catch (_: Exception) {
+            bitmap
         }
     }
 

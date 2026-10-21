@@ -38,5 +38,6 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }
