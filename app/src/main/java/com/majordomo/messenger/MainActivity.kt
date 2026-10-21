@@ -82,6 +82,7 @@ class MainActivity : Activity() {
     private var activeVoiceRecorder: MediaRecorder? = null
     private var activeVoiceFile: File? = null
     private var activeVoiceDialog: AlertDialog? = null
+    private val activeVoiceAnimations = mutableListOf<android.animation.Animator>()
     private var pendingCaptureUri: Uri? = null
     private var pendingCaptureFile: File? = null
     private data class PendingMediaRequest(
@@ -1008,14 +1009,100 @@ class MainActivity : Activity() {
         activeVoiceFile = output
         addMediaDiagnostic("NativeVoice: запись началась, формат AAC/M4A, mono, 16 kHz, 24 kbps")
 
+        // Custom recording UI: a pulsing red indicator and animated waveform make recording state obvious.
+        val density = resources.displayMetrics.density
+        fun dp(value: Int): Int = (value * density).toInt()
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(24), dp(8), dp(24), dp(12))
+        }
+        val statusRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val recordingDot = View(this).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(Color.rgb(230, 45, 55))
+            }
+            alpha = 1f
+        }
+        statusRow.addView(recordingDot, LinearLayout.LayoutParams(dp(12), dp(12)).apply {
+            marginEnd = dp(9)
+        })
+        statusRow.addView(TextView(this).apply {
+            text = "ИДЁТ ЗАПИСЬ"
+            setTextColor(Color.rgb(210, 35, 45))
+            textSize = 14f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            letterSpacing = 0.08f
+        })
+        content.addView(statusRow, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, dp(32)
+        ))
+
+        val waveform = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val barHeights = intArrayOf(12, 22, 34, 18, 28, 40, 20, 32, 14, 26, 36, 16, 30, 20, 12)
+        val bars = mutableListOf<View>()
+        barHeights.forEachIndexed { index, height ->
+            val bar = View(this).apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                    cornerRadius = dp(3).toFloat()
+                    setColor(Color.rgb(230, 45, 55))
+                }
+                pivotY = dp(height).toFloat()
+            }
+            bars.add(bar)
+            waveform.addView(bar, LinearLayout.LayoutParams(dp(4), dp(height)).apply {
+                marginStart = dp(3)
+                marginEnd = dp(3)
+            })
+            val animator = android.animation.ObjectAnimator.ofFloat(bar, View.SCALE_Y, 0.25f, 1.0f, 0.4f).apply {
+                duration = (430L + (index % 5) * 115L)
+                startDelay = index * 45L
+                repeatCount = android.animation.ValueAnimator.INFINITE
+                repeatMode = android.animation.ValueAnimator.REVERSE
+                interpolator = android.view.animation.LinearInterpolator()
+            }
+            activeVoiceAnimations.add(animator)
+        }
+        content.addView(waveform, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(58)
+        ).apply {
+            topMargin = dp(12)
+        })
+        content.addView(TextView(this).apply {
+            text = "Нажмите «Готово», чтобы отправить сообщение"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(Color.DKGRAY)
+        }, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            topMargin = dp(8)
+        })
+
+        val pulse = android.animation.ObjectAnimator.ofFloat(recordingDot, View.ALPHA, 1f, 0.25f, 1f).apply {
+            duration = 900L
+            repeatCount = android.animation.ValueAnimator.INFINITE
+            interpolator = android.view.animation.LinearInterpolator()
+        }
+        activeVoiceAnimations.add(pulse)
+
         val dialog = AlertDialog.Builder(this)
             .setTitle("Голосовое сообщение")
-            .setMessage("Идёт запись. Нажмите «Готово», чтобы передать сообщение в чат.")
+            .setView(content)
             .setPositiveButton("Готово", null)
             .setNegativeButton("Отмена") { _, _ -> finishNativeVoiceRecording(false) }
             .create()
         activeVoiceDialog = dialog
         dialog.setOnShowListener {
+            activeVoiceAnimations.forEach { it.start() }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 finishNativeVoiceRecording(true)
             }
@@ -1031,6 +1118,10 @@ class MainActivity : Activity() {
         activeVoiceFile = null
         val dialog = activeVoiceDialog
         activeVoiceDialog = null
+        activeVoiceAnimations.forEach { animator ->
+            try { animator.cancel() } catch (_: Exception) {}
+        }
+        activeVoiceAnimations.clear()
         try { recorder?.stop() } catch (error: Exception) {
             addMediaDiagnostic("NativeVoice: stop завершился ошибкой: ${error.javaClass.simpleName}: ${error.message}")
         } finally {
