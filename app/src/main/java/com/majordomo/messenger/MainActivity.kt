@@ -978,7 +978,7 @@ class MainActivity : Activity() {
         val output = try {
             File.createTempFile("voice_", ".m4a", directory)
         } catch (error: Exception) {
-            addMediaDiagnostic("NativeVoice: не удалось создать файл: \${error.message}")
+            addMediaDiagnostic("NativeVoice: не удалось создать файл: ${error.message}")
             finishFileChooser(null)
             return
         }
@@ -997,7 +997,7 @@ class MainActivity : Activity() {
             instance
         } catch (error: Exception) {
             output.delete()
-            addMediaDiagnostic("NativeVoice: запуск записи не удался: \${error.javaClass.simpleName}: \${error.message}")
+            addMediaDiagnostic("NativeVoice: запуск записи не удался: ${error.javaClass.simpleName}: ${error.message}")
             Toast.makeText(this, "Не удалось начать запись голосового сообщения", Toast.LENGTH_LONG).show()
             finishFileChooser(null)
             return
@@ -1031,7 +1031,7 @@ class MainActivity : Activity() {
         val dialog = activeVoiceDialog
         activeVoiceDialog = null
         try { recorder?.stop() } catch (error: Exception) {
-            addMediaDiagnostic("NativeVoice: stop завершился ошибкой: \${error.javaClass.simpleName}: \${error.message}")
+            addMediaDiagnostic("NativeVoice: stop завершился ошибкой: ${error.javaClass.simpleName}: ${error.message}")
         } finally {
             try { recorder?.reset() } catch (_: Exception) {}
             try { recorder?.release() } catch (_: Exception) {}
@@ -1047,10 +1047,11 @@ class MainActivity : Activity() {
         }
 
         val limit = pendingUploadLimitBytes
-        if (limit != null && output.length() > limit) {
+        val outputSize = output.length()
+        if (limit != null && outputSize > limit) {
             output.delete()
             Toast.makeText(this, "Запись превышает лимит загрузки страницы. Запишите более короткое сообщение.", Toast.LENGTH_LONG).show()
-            addMediaDiagnostic("NativeVoice: файл \${output.length()} байт превышает лимит $limit")
+            addMediaDiagnostic("NativeVoice: файл $outputSize байт превышает лимит $limit")
             finishFileChooser(null)
             return
         }
@@ -1059,11 +1060,11 @@ class MainActivity : Activity() {
             FileProvider.getUriForFile(this, "$packageName.fileprovider", output)
         } catch (error: Exception) {
             output.delete()
-            addMediaDiagnostic("NativeVoice: FileProvider error: \${error.message}")
+            addMediaDiagnostic("NativeVoice: FileProvider error: ${error.message}")
             finishFileChooser(null)
             return
         }
-        addMediaDiagnostic("NativeVoice: готов файл \${output.length()} байт; передаём через штатный file chooser")
+        addMediaDiagnostic("NativeVoice: готов файл ${output.length()} байт; передаём через штатный file chooser")
         finishFileChooser(arrayOf(uri))
     }
 
@@ -1105,7 +1106,13 @@ class MainActivity : Activity() {
                     icon.getAttribute('aria-label') || '',
                     icon.getAttribute('data-icon') || ''
                   ].join(' ');
-                  if (!/(microphone|\\bmic\\b|voice|record|диктофон|голос|запис|микрофон)/i.test(text)) return;
+                  var descendants = control.querySelectorAll('i,span,svg');
+                  for (var i = 0; i < descendants.length; i++) {
+                    var child = descendants[i];
+                    text += ' ' + (typeof child.className === 'string' ? child.className : '');
+                    text += ' ' + (child.getAttribute('aria-label') || '') + ' ' + (child.getAttribute('data-icon') || '');
+                  }
+                  if (!/(microphone|\bmic\b|voice|record|диктофон|голос|запис|микрофон)/i.test(text)) return;
                   if (/(send|отправ|upload|загруз)/i.test(text)) return;
                   if (!window.MajordomoApp || typeof window.MajordomoApp.startNativeVoiceRecording !== 'function') return;
                   event.preventDefault();
@@ -1121,7 +1128,7 @@ class MainActivity : Activity() {
             })();
         """.trimIndent()
         view.evaluateJavascript(script, null)
-        addMediaDiagnostic("Установлен перехватчик кнопки голосовой записи: \${view.url ?: "(URL неизвестен)"}")
+        addMediaDiagnostic("Установлен перехватчик кнопки голосовой записи: ${view.url ?: "(URL неизвестен)"}")
     }
 
     /**
