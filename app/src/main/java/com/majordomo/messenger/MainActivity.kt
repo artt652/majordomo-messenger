@@ -279,10 +279,11 @@ class MainActivity : Activity() {
             loadsImagesAutomatically = true
             javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(false)
-            builtInZoomControls = true
+            // Keep the site's own layout; disable automatic fit-to-width scaling.
+            builtInZoomControls = false
             displayZoomControls = false
-            useWideViewPort = true
-            loadWithOverviewMode = true
+            useWideViewPort = false
+            loadWithOverviewMode = false
             mediaPlaybackRequiresUserGesture = false
             allowFileAccess = true
             allowContentAccess = true
