@@ -1200,6 +1200,27 @@ class MainActivity : Activity() {
                   }
                   console.log('[NativeVoice] #tm_send clicked; micMode=' + micMode);
                   if (!micMode) return;
+
+                  // Prefer the page's own recorder on secure origins when the browser
+                  // APIs it needs are available. Use native Android recording only as
+                  // a fallback for HTTP/insecure contexts or missing recording APIs.
+                  var browserRecordingAvailable = !!(
+                    window.isSecureContext &&
+                    navigator.mediaDevices &&
+                    typeof navigator.mediaDevices.getUserMedia === 'function' &&
+                    typeof window.MediaRecorder === 'function'
+                  );
+                  console.log('[NativeVoice] recording capability: secureContext=' +
+                    !!window.isSecureContext +
+                    '; getUserMedia=' + !!(navigator.mediaDevices &&
+                      typeof navigator.mediaDevices.getUserMedia === 'function') +
+                    '; MediaRecorder=' + (typeof window.MediaRecorder === 'function') +
+                    '; browserRecordingAvailable=' + browserRecordingAvailable);
+                  if (browserRecordingAvailable) {
+                    console.log('[NativeVoice] using the page browser recorder');
+                    return;
+                  }
+
                   if (!window.MajordomoApp || typeof window.MajordomoApp.startNativeVoiceRecording !== 'function') {
                     console.log('[NativeVoice] bridge startNativeVoiceRecording is unavailable');
                     return;
@@ -1208,7 +1229,7 @@ class MainActivity : Activity() {
                   event.preventDefault();
                   event.stopPropagation();
                   if (event.stopImmediatePropagation) event.stopImmediatePropagation();
-                  console.log('[NativeVoice] voice-mode send intercepted; starting native recorder');
+                  console.log('[NativeVoice] browser recording unavailable; starting native recorder');
                   window.MajordomoApp.startNativeVoiceRecording();
                 }, true);
                 console.log('[NativeVoice] hook installed');
