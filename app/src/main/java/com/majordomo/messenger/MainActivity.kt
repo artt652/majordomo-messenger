@@ -3,6 +3,10 @@ package com.majordomo.messenger
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.media.AudioManager
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.media.AudioFormat
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -383,6 +387,60 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun runNativeMicrophoneTest() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            addMediaDiagnostic("Native AudioRecord: ОТКАЗ — RECORD_AUDIO не выдан Android")
+            return
+        }
+        Thread {
+            var recorder: AudioRecord? = null
+            try {
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                addMediaDiagnostic(
+                    "Native audio state: mode=${audioManager.mode}; micMute=${audioManager.isMicrophoneMute}; " +
+                        "musicActive=${audioManager.isMusicActive}; activeRecordings=${audioManager.activeRecordingConfigurations.map { config -> "source=${config.clientAudioSource}, session=${config.clientAudioSessionId}" }}"
+                )
+                val sampleRate = 16000
+                val minBuffer = AudioRecord.getMinBufferSize(
+                    sampleRate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT
+                )
+                if (minBuffer <= 0) {
+                    addMediaDiagnostic("Native AudioRecord: getMinBufferSize вернул $minBuffer")
+                    return@Thread
+                }
+                recorder = AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    sampleRate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    maxOf(minBuffer, sampleRate / 2)
+                )
+                addMediaDiagnostic("Native AudioRecord: state=${recorder.state} (STATE_INITIALIZED=1), buffer=$minBuffer")
+                if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                    addMediaDiagnostic("Native AudioRecord: ОШИБКА — не удалось инициализировать запись")
+                    return@Thread
+                }
+                recorder.startRecording()
+                addMediaDiagnostic("Native AudioRecord: recordingState=${recorder.recordingState} (RECORDSTATE_RECORDING=3)")
+                val buffer = ShortArray(maxOf(minBuffer / 2, 1024))
+                val read = recorder.read(buffer, 0, buffer.size)
+                addMediaDiagnostic(
+                    if (read > 0) "Native AudioRecord: УСПЕХ — прочитано $read аудиосэмплов. Звук не сохранялся."
+                    else "Native AudioRecord: ОШИБКА чтения, код=$read"
+                )
+            } catch (e: SecurityException) {
+                addMediaDiagnostic("Native AudioRecord SecurityException: ${e.message}")
+            } catch (e: Exception) {
+                addMediaDiagnostic("Native AudioRecord ERROR: ${e.javaClass.simpleName}: ${e.message}")
+            } finally {
+                try { recorder?.stop() } catch (_: Exception) {}
+                try { recorder?.release() } catch (_: Exception) {}
+            }
+        }.start()
+    }
+
     private fun installMediaJavaScriptDiagnostics(view: WebView) {
         val script = """
             (function() {
@@ -505,6 +563,10 @@ class MainActivity : Activity() {
         val actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
         }
+        actions.addView(Button(this).apply {
+            text = "Тест микрофона"
+            setOnClickListener { runNativeMicrophoneTest() }
+        }, LinearLayout.LayoutParams(0, -2, 1f))
         actions.addView(Button(this).apply {
             text = "Копировать"
             setOnClickListener {
