@@ -21,6 +21,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.DownloadManager
 import android.content.Context
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -55,6 +57,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Button
+import android.widget.Spinner
+import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -65,6 +69,7 @@ import com.google.zxing.ResultPoint
 import com.journeyapps.barcodescanner.BarcodeCallback
 import com.journeyapps.barcodescanner.BarcodeResult
 import com.journeyapps.barcodescanner.DecoratedBarcodeView
+import com.journeyapps.barcodescanner.camera.CameraSettings
 
 class MainActivity : Activity() {
     private lateinit var launcher: WebView
@@ -77,6 +82,8 @@ class MainActivity : Activity() {
     private val mediaDiagnosticsLines = java.util.ArrayDeque<String>()
     private var qrScannerOverlay: FrameLayout? = null
     private var qrBarcodeView: DecoratedBarcodeView? = null
+    private var qrCameraSelector: Spinner? = null
+    private var selectedQrCameraIndex: Int = -1
     private var chooser: ValueCallback<Array<Uri>>? = null
     private var pendingChooserParams: WebChromeClient.FileChooserParams? = null
     private var pendingUploadLimitBytes: Long? = null
@@ -718,15 +725,29 @@ class MainActivity : Activity() {
         }
         qrBarcodeView = scanner
 
+        val cameraSelector = Spinner(this).apply {
+            setBackgroundColor(Color.rgb(42, 45, 54))
+            setPadding((8 * resources.displayMetrics.density).toInt(), 0, (8 * resources.displayMetrics.density).toInt(), 0)
+        }
+        qrCameraSelector = cameraSelector
+        refreshQrCameraOptions()
+
         val cancel = android.widget.Button(this).apply {
             text = "Закрыть"
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.rgb(55, 58, 68))
             setOnClickListener { hideQrScanner() }
         }
-        card.addView(scanner, FrameLayout.LayoutParams(-1, 0).apply {
-            height = (resources.displayMetrics.density * 360).toInt()
+        card.addView(cameraSelector, FrameLayout.LayoutParams(-1, (resources.displayMetrics.density * 48).toInt()).apply {
             gravity = android.view.Gravity.TOP
+            leftMargin = (resources.displayMetrics.density * 12).toInt()
+            rightMargin = (resources.displayMetrics.density * 12).toInt()
+            topMargin = (resources.displayMetrics.density * 8).toInt()
+        })
+        card.addView(scanner, FrameLayout.LayoutParams(-1, 0).apply {
+            height = (resources.displayMetrics.density * 310).toInt()
+            gravity = android.view.Gravity.TOP
+            topMargin = (resources.displayMetrics.density * 56).toInt()
         })
         card.addView(cancel, FrameLayout.LayoutParams(-1, (resources.displayMetrics.density * 48).toInt()).apply {
             gravity = android.view.Gravity.BOTTOM
@@ -744,6 +765,61 @@ class MainActivity : Activity() {
         card.setOnClickListener { /* Keep taps inside the scanner card from closing it. */ }
         root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
         qrScannerOverlay = overlay
+    }
+
+    private fun refreshQrCameraOptions() {
+        val selector = qrCameraSelector ?: return
+        val options = try {
+            val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            manager.cameraIdList.mapIndexed { index, cameraId ->
+                val characteristics = manager.getCameraCharacteristics(cameraId)
+                val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+                val facingName = when (facing) {
+                    CameraCharacteristics.LENS_FACING_FRONT -> "Фронтальная"
+                    CameraCharacteristics.LENS_FACING_BACK -> "Основная"
+                    CameraCharacteristics.LENS_FACING_EXTERNAL -> "Внешняя"
+                    else -> "Камера"
+                }
+                Pair(index, "$facingName · ${index + 1}")
+            }
+        } catch (error: Exception) {
+            addMediaDiagnostic("QR: не удалось получить список камер: ${error.message}")
+            emptyList()
+        }
+
+        if (options.isEmpty()) {
+            selector.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf("Камеры не найдены"))
+            selector.isEnabled = false
+            return
+        }
+
+        selector.isEnabled = true
+        selector.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, options.map { it.second }).also {
+            it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+        val selectedPosition = options.indexOfFirst { it.first == selectedQrCameraIndex }
+            .takeIf { it >= 0 } ?: 0
+        selectedQrCameraIndex = options[selectedPosition].first
+        selector.setSelection(selectedPosition, false)
+        selector.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val cameraIndex = options.getOrNull(position)?.first ?: return
+                if (cameraIndex == selectedQrCameraIndex) return
+                selectedQrCameraIndex = cameraIndex
+                val scanner = qrBarcodeView ?: return
+                val wasVisible = qrScannerOverlay?.visibility == View.VISIBLE
+                scanner.pause()
+                scanner.barcodeView.cameraSettings = CameraSettings().apply {
+                    requestedCameraId = cameraIndex
+                }
+                if (wasVisible) scanner.resume()
+                addMediaDiagnostic("QR: выбрана камера ${options[position].second} (индекс $cameraIndex)")
+            }
+        }
+        qrBarcodeView?.barcodeView?.cameraSettings = CameraSettings().apply {
+            requestedCameraId = selectedQrCameraIndex
+        }
     }
 
     private fun showQrScanner() {
