@@ -106,7 +106,7 @@ class MainActivity : Activity() {
         CookieManager.getInstance().setAcceptThirdPartyCookies(site, true)
 
         launcher.addJavascriptInterface(PageBridge(), "MajordomoApp")
-        launcher.webChromeClient = createMediaWebChromeClient()
+        launcher.webChromeClient = createMediaWebChromeClient(launcher)
         launcher.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url
@@ -172,7 +172,7 @@ class MainActivity : Activity() {
             }
         }
 
-        site.webChromeClient = createMediaWebChromeClient()
+        site.webChromeClient = createMediaWebChromeClient(site)
 
         site.setDownloadListener(DownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
             try {
@@ -240,7 +240,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun createMediaWebChromeClient(): WebChromeClient {
+    private fun createMediaWebChromeClient(owner: WebView): WebChromeClient {
         return object : WebChromeClient() {
             override fun onReceivedTitle(view: WebView, title: String?) {
                 super.onReceivedTitle(view, title)
@@ -268,7 +268,7 @@ class MainActivity : Activity() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread {
                     addMediaDiagnostic(
-                        "Запрос WebView: view=${if (view === site) "site" else if (view === launcher) "launcher" else "unknown"}\nСтраница: ${view.url}\nOrigin: ${request.origin}\nРесурсы: ${request.resources.joinToString()}"
+                        "Запрос WebView: view=${if (owner === site) "site" else if (owner === launcher) "launcher" else "unknown"}\nСтраница: ${owner.url}\nOrigin: ${request.origin}\nРесурсы: ${request.resources.joinToString()}"
                     )
                     // Chromium only permits getUserMedia on secure origins:
                     // HTTPS, plus loopback addresses which Chromium treats as trustworthy.
@@ -278,7 +278,7 @@ class MainActivity : Activity() {
                         (originUri.scheme == "http" &&
                             (originHost == "localhost" || originHost == "127.0.0.1" || originHost == "::1"))
                     if (!secureOrigin) {
-                        addMediaDiagnostic("ОТКАЗ: небезопасный origin. origin=${request.origin}; схема=${originUri.scheme}; host=$originHost")
+                        addMediaDiagnostic("ОТКАЗ: небезопасный origin. origin=${request.origin}; страница=${owner.url}; схема=${originUri.scheme}; host=$originHost")
                         request.deny()
                         Toast.makeText(
                             this@MainActivity,
