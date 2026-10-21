@@ -140,7 +140,12 @@ class MainActivity : Activity() {
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val statusTop = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
             val navigationBottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
-            view.setPadding(0, statusTop, 0, navigationBottom)
+            // Android 15+ enforces edge-to-edge for targetSdk 35. In that mode
+            // adjustResize alone may not shrink the content area for the IME.
+            // Apply the IME inset to the root so the WebView itself is resized,
+            // instead of allowing the focused input to pan the whole page upward.
+            val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            view.setPadding(0, statusTop, 0, maxOf(navigationBottom, imeBottom))
             insets
         }
         launcher = WebView(this)
