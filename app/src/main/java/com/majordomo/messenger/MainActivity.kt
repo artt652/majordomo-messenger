@@ -212,6 +212,7 @@ class MainActivity : Activity() {
                 if (view === site && !url.isNullOrBlank() && url.startsWith("http")) {
                     if (mediaDiagnosticsEnabled) installMediaJavaScriptDiagnostics(view)
                     installNativeVoiceRecordingHook(view)
+                    installKeyboardViewportFix(view)
                     if (offlineCacheFallbackInProgress) {
                         view.settings.cacheMode = WebSettings.LOAD_DEFAULT
                         offlineCacheFallbackInProgress = false
@@ -1269,6 +1270,73 @@ class MainActivity : Activity() {
      * then returns its M4A through the existing file input, so the site's upload handler remains
      * responsible for sending the message.
      */
+
+    /**
+     * Prevent Android WebView from scrolling the whole document (including its header)
+     * when the soft keyboard resizes the visual viewport for a focused chat input.
+     */
+    private fun installKeyboardViewportFix(view: WebView) {
+        val script = """
+            (function() {
+              try {
+                if (window.__majordomoKeyboardViewportFixInstalled) return;
+                window.__majordomoKeyboardViewportFixInstalled = true;
+
+                var savedScrollX = 0;
+                var savedScrollY = 0;
+                var focusPending = false;
+                var lastViewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+                var restoreTimer = null;
+
+                function isEditable(el) {
+                  if (!el) return false;
+                  var tag = (el.tagName || '').toLowerCase();
+                  return tag === 'input' || tag === 'textarea' || el.isContentEditable === true;
+                }
+
+                function rememberScroll() {
+                  savedScrollX = window.scrollX || window.pageXOffset || 0;
+                  savedScrollY = window.scrollY || window.pageYOffset || 0;
+                  focusPending = true;
+                }
+
+                document.addEventListener('pointerdown', function(event) {
+                  if (isEditable(event.target)) rememberScroll();
+                }, true);
+
+                document.addEventListener('focusin', function(event) {
+                  if (isEditable(event.target) && !focusPending) rememberScroll();
+                }, true);
+
+                document.addEventListener('focusout', function() {
+                  setTimeout(function() { focusPending = false; }, 250);
+                }, true);
+
+                function onViewportResize() {
+                  var height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+                  var keyboardOpening = height < lastViewportHeight - 100;
+                  lastViewportHeight = height;
+                  if (!keyboardOpening || !focusPending || !isEditable(document.activeElement)) return;
+
+                  clearTimeout(restoreTimer);
+                  restoreTimer = setTimeout(function() {
+                    if (!focusPending || !isEditable(document.activeElement)) return;
+                    window.scrollTo(savedScrollX, savedScrollY);
+                  }, 80);
+                }
+
+                if (window.visualViewport) {
+                  window.visualViewport.addEventListener('resize', onViewportResize);
+                }
+                window.addEventListener('resize', onViewportResize);
+              } catch (e) {
+                console.log('[KeyboardViewportFix] ' + e.name + ': ' + e.message);
+              }
+            })();
+        """.trimIndent()
+        view.evaluateJavascript(script, null)
+    }
+
     private fun installNativeVoiceRecordingHook(view: WebView) {
         val script = """
             (function() {
