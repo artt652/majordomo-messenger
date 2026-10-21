@@ -244,8 +244,14 @@ class MainActivity : Activity() {
 
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread {
-                    // Chromium only permits getUserMedia on secure origins (normally HTTPS).
-                    if (Uri.parse(request.origin.toString()).scheme != "https") {
+                    // Chromium only permits getUserMedia on secure origins:
+                    // HTTPS, plus loopback addresses which Chromium treats as trustworthy.
+                    val originUri = Uri.parse(request.origin.toString())
+                    val originHost = originUri.host?.lowercase()
+                    val secureOrigin = originUri.scheme == "https" ||
+                        (originUri.scheme == "http" &&
+                            (originHost == "localhost" || originHost == "127.0.0.1" || originHost == "::1"))
+                    if (!secureOrigin) {
                         request.deny()
                         Toast.makeText(
                             this@MainActivity,
