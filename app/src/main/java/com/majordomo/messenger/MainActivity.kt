@@ -72,6 +72,7 @@ class MainActivity : Activity() {
     private lateinit var root: FrameLayout
     private var mediaDiagnosticsPanel: LinearLayout? = null
     private var mediaDiagnosticsToggleButton: Button? = null
+    @Volatile private var mediaDiagnosticsEnabled = false
     private var mediaDiagnosticsText: TextView? = null
     private val mediaDiagnosticsLines = java.util.ArrayDeque<String>()
     private var qrScannerOverlay: FrameLayout? = null
@@ -199,7 +200,7 @@ class MainActivity : Activity() {
                 super.onPageFinished(view, url)
                 CookieManager.getInstance().flush()
                 if (view === site && !url.isNullOrBlank() && url.startsWith("http")) {
-                    installMediaJavaScriptDiagnostics(view)
+                    if (mediaDiagnosticsEnabled) installMediaJavaScriptDiagnostics(view)
                     installNativeVoiceRecordingHook(view)
                     if (offlineCacheFallbackInProgress) {
                         view.settings.cacheMode = WebSettings.LOAD_DEFAULT
@@ -574,6 +575,7 @@ class MainActivity : Activity() {
     }
 
     private fun addMediaDiagnostic(message: String) {
+        if (!mediaDiagnosticsEnabled) return
         val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
         val line = "$timestamp  $message"
         android.util.Log.d("MajordomoMedia", line)
@@ -678,9 +680,17 @@ class MainActivity : Activity() {
     }
 
     private fun updateMediaDiagnosticsVisibility(enabled: Boolean) {
+        mediaDiagnosticsEnabled = enabled
         mediaDiagnosticsToggleButton?.visibility = if (enabled) View.VISIBLE else View.GONE
-        if (!enabled) mediaDiagnosticsPanel?.visibility = View.GONE
-        addMediaDiagnostic("Диагностика " + (if (enabled) "включена" else "отключена") + " на главной странице")
+        if (!enabled) {
+            mediaDiagnosticsPanel?.visibility = View.GONE
+            return
+        }
+        addMediaDiagnostic("Диагностика включена на главной странице")
+        logMediaEnvironment()
+        if (::site.isInitialized && site.url?.startsWith("http") == true) {
+            installMediaJavaScriptDiagnostics(site)
+        }
     }
 
     private fun createQrScannerOverlay() {
