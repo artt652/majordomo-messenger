@@ -42,6 +42,8 @@ class MainActivity : Activity() {
     private var pendingRequest: PermissionRequest? = null
     private var pendingResources = emptyArray<String>()
     @Volatile private var activeSiteUrl: String = ""
+    @Volatile private var lastSuccessfulSiteUrl: String = ""
+    private var offlineCacheFallbackInProgress = false
     private val permissionRequestCode = 301
     private val fileChooserCode = 401
     private val notificationPermissionRequestCode = 501
@@ -116,7 +118,10 @@ class MainActivity : Activity() {
                 if (request.isForMainFrame &&
                     error.errorCode != -3 &&
                     error.errorCode != WebViewClient.ERROR_UNSUPPORTED_SCHEME) {
-                    returnHomeAfterError(request.url.toString(), error.description?.toString() ?: "Ошибка сети")
+                    handleMainFrameNetworkError(
+                        request.url.toString(),
+                        error.description?.toString() ?: "Ошибка сети"
+                    )
                 }
             }
 
@@ -133,6 +138,13 @@ class MainActivity : Activity() {
             override fun onPageFinished(view: WebView, url: String?) {
                 super.onPageFinished(view, url)
                 CookieManager.getInstance().flush()
+                if (view === site && !url.isNullOrBlank() && url.startsWith("http")) {
+                    if (offlineCacheFallbackInProgress) {
+                        view.settings.cacheMode = WebSettings.LOAD_DEFAULT
+                        offlineCacheFallbackInProgress = false
+                    }
+                    lastSuccessfulSiteUrl = url
+                }
             }
         }
 
@@ -367,6 +379,35 @@ class MainActivity : Activity() {
             startService(Intent(this, BackgroundSessionService::class.java).setAction(BackgroundSessionService.ACTION_STOP))
         } catch (_: Exception) {
             stopService(Intent(this, BackgroundSessionService::class.java))
+        }
+    }
+
+    private fun handleMainFrameNetworkError(url: String, reason: String) {
+        runOnUiThread {
+            if (site.visibility != View.VISIBLE) return@runOnUiThread
+            if (offlineCacheFallbackInProgress) {
+                offlineCacheFallbackInProgress = false
+                site.settings.cacheMode = WebSettings.LOAD_DEFAULT
+                returnHomeAfterError(url, reason)
+                return@runOnUiThread
+            }
+
+            val cachedUrl = lastSuccessfulSiteUrl.takeIf { it.isNotBlank() } ?: url
+            if (cachedUrl.isBlank()) {
+                returnHomeAfterError(url, reason)
+                return@runOnUiThread
+            }
+
+            // Retry from WebView's disk cache first. This keeps the last usable page
+            // available during short network outages; dynamic server data may be stale.
+            offlineCacheFallbackInProgress = true
+            site.settings.cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
+            site.loadUrl(cachedUrl)
+            Toast.makeText(
+                this@MainActivity,
+                "Нет сети. Пробуем открыть сохранённую страницу…",
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
