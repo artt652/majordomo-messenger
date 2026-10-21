@@ -1032,9 +1032,12 @@ class MainActivity : Activity() {
 
     private fun showVideoTrimDialog(uri: Uri, callback: (Uri?) -> Unit) {
         val durationMs = try {
-            MediaMetadataRetriever().use { retriever ->
+            val retriever = MediaMetadataRetriever()
+            try {
                 retriever.setDataSource(this, uri)
-                (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L)
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            } finally {
+                retriever.release()
             }
         } catch (_: Exception) { 0L }
 
@@ -1116,11 +1119,6 @@ class MainActivity : Activity() {
             .setNegativeButton("Отмена") { _, _ ->
                 preview.stopPlayback()
                 callback(null)
-            }
-            .setNeutralButton("Использовать целиком") { _, _ ->
-                preview.stopPlayback()
-                // This option is intentionally not a bypass: an oversized file must be trimmed.
-                showVideoTrimDialog(uri, callback)
             }
             .setPositiveButton("Обрезать") { _, _ ->
                 preview.stopPlayback()
