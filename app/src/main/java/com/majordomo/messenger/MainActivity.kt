@@ -200,6 +200,7 @@ class MainActivity : Activity() {
         createQrScannerOverlay()
         createMediaDiagnosticsUi()
         addMediaDiagnostic("Диагностика запущена. Нажмите «Диагностика», затем повторите запрос камеры или микрофона.")
+        logMediaEnvironment()
         site.visibility = View.GONE
         setContentView(root)
 
@@ -385,6 +386,27 @@ class MainActivity : Activity() {
                 return
             }
         }
+    }
+
+    private fun logMediaEnvironment() {
+        val provider = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WebView.getCurrentWebViewPackage()?.let { "${it.packageName} ${it.versionName} (versionCode=${if (Build.VERSION.SDK_INT >= 28) it.longVersionCode else @Suppress("DEPRECATION") it.versionCode.toLong()})" }
+                ?: "provider unavailable"
+        } else {
+            "Android API < 26; provider API unavailable"
+        }
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val inputDevices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).joinToString {
+            "type=${it.type}, product=${it.productName}"
+        }.ifBlank { "(none reported)" }
+        addMediaDiagnostic(
+            "Среда: Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}); " +
+                "device=${Build.MANUFACTURER} ${Build.MODEL}; targetSdk=${applicationInfo.targetSdkVersion}; WebView=$provider"
+        )
+        addMediaDiagnostic(
+            "Аудиосреда: mode=${audioManager.mode}; micMute=${audioManager.isMicrophoneMute}; " +
+                "входы=[${inputDevices}]"
+        )
     }
 
     private fun runNativeMicrophoneTest() {
