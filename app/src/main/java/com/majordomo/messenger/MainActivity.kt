@@ -28,6 +28,10 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Button
 import android.widget.Toast
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -43,6 +47,9 @@ class MainActivity : Activity() {
     private lateinit var launcher: WebView
     private lateinit var site: WebView
     private lateinit var root: FrameLayout
+    private var mediaDiagnosticsPanel: LinearLayout? = null
+    private var mediaDiagnosticsText: TextView? = null
+    private val mediaDiagnosticsLines = java.util.ArrayDeque<String>()
     private var qrScannerOverlay: FrameLayout? = null
     private var qrBarcodeView: DecoratedBarcodeView? = null
     private var chooser: ValueCallback<Array<Uri>>? = null
@@ -186,6 +193,8 @@ class MainActivity : Activity() {
         root.addView(launcher, FrameLayout.LayoutParams(-1, -1))
         root.addView(site, FrameLayout.LayoutParams(-1, -1))
         createQrScannerOverlay()
+        createMediaDiagnosticsUi()
+        addMediaDiagnostic("Диагностика запущена. Нажмите «Диагностика», затем повторите запрос камеры или микрофона.")
         site.visibility = View.GONE
         setContentView(root)
 
@@ -239,10 +248,8 @@ class MainActivity : Activity() {
             }
 
             override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
-                android.util.Log.d(
-                    "MajordomoMedia",
-                    "JS console: ${consoleMessage.message()} (${consoleMessage.sourceId()}:${consoleMessage.lineNumber()})"
-                )
+                val message = "JS console: ${consoleMessage.message()} (${consoleMessage.sourceId()}:${consoleMessage.lineNumber()})"
+                addMediaDiagnostic(message)
                 return super.onConsoleMessage(consoleMessage)
             }
 
@@ -260,9 +267,8 @@ class MainActivity : Activity() {
 
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread {
-                    android.util.Log.d(
-                        "MajordomoMedia",
-                        "Permission request: webView=${if (view === site) "site" else if (view === launcher) "launcher" else "unknown"}, pageUrl=${view.url}, origin=${request.origin}, resources=${request.resources.joinToString()}"
+                    addMediaDiagnostic(
+                        "Запрос WebView: view=${if (view === site) "site" else if (view === launcher) "launcher" else "unknown"}\nСтраница: ${view.url}\nOrigin: ${request.origin}\nРесурсы: ${request.resources.joinToString()}"
                     )
                     // Chromium only permits getUserMedia on secure origins:
                     // HTTPS, plus loopback addresses which Chromium treats as trustworthy.
@@ -272,10 +278,7 @@ class MainActivity : Activity() {
                         (originUri.scheme == "http" &&
                             (originHost == "localhost" || originHost == "127.0.0.1" || originHost == "::1"))
                     if (!secureOrigin) {
-                        android.util.Log.w(
-                            "MajordomoMedia",
-                            "Denied media request: insecure origin=${request.origin}, pageUrl=${view.url}, scheme=${originUri.scheme}, host=$originHost"
-                        )
+                        addMediaDiagnostic("ОТКАЗ: небезопасный origin. origin=${request.origin}; схема=${originUri.scheme}; host=$originHost")
                         request.deny()
                         Toast.makeText(
                             this@MainActivity,
@@ -289,10 +292,7 @@ class MainActivity : Activity() {
                             it == PermissionRequest.RESOURCE_VIDEO_CAPTURE
                     }.toTypedArray()
                     if (resources.isEmpty()) {
-                        android.util.Log.w(
-                            "MajordomoMedia",
-                            "Denied media request: no supported resources. origin=${request.origin}, requested=${request.resources.joinToString()}"
-                        )
+                        addMediaDiagnostic("ОТКАЗ: нет поддерживаемых ресурсов. Запрошено: ${request.resources.joinToString()}")
                         request.deny()
                         return@runOnUiThread
                     }
@@ -340,9 +340,9 @@ class MainActivity : Activity() {
     private fun grantMediaRequest(request: PermissionRequest, resources: Array<String>) {
         try {
             request.grant(resources)
-            android.util.Log.d("MajordomoMedia", "Granted WebView media resources: ${resources.joinToString()}")
+            addMediaDiagnostic("РАЗРЕШЕНО WebView: ${resources.joinToString()}")
         } catch (error: Exception) {
-            android.util.Log.e("MajordomoMedia", "WebView media grant failed", error)
+            addMediaDiagnostic("ОШИБКА выдачи разрешения: ${error.javaClass.simpleName}: ${error.message}")
             try { request.deny() } catch (_: Exception) {}
         }
     }
@@ -356,10 +356,7 @@ class MainActivity : Activity() {
         pendingResources = resources
         pendingAndroidPermissions = needed
         permissionRequestInProgress = true
-        android.util.Log.d(
-            "MajordomoMedia",
-            "Requesting Android permissions for origin=${request.origin}, resources=${resources.joinToString()}, missing=${needed.joinToString()}"
-        )
+        addMediaDiagnostic("Запрос разрешений Android: origin=${request.origin}; ресурсы=${resources.joinToString()}; не хватает=${needed.joinToString()}")
         requestPermissions(needed.toTypedArray(), permissionRequestCode)
     }
 
@@ -383,6 +380,104 @@ class MainActivity : Activity() {
                 return
             }
         }
+    }
+
+    private fun addMediaDiagnostic(message: String) {
+        val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+        val line = "$timestamp  $message"
+        android.util.Log.d("MajordomoMedia", line)
+        runOnUiThread {
+            mediaDiagnosticsLines.addLast(line)
+            while (mediaDiagnosticsLines.size > 150) mediaDiagnosticsLines.removeFirst()
+            mediaDiagnosticsText?.text = mediaDiagnosticsLines.joinToString("\n\n")
+        }
+    }
+
+    private fun createMediaDiagnosticsUi() {
+        val density = resources.displayMetrics.density
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((14 * density).toInt(), (12 * density).toInt(), (14 * density).toInt(), (10 * density).toInt())
+            setBackgroundColor(Color.rgb(25, 28, 35))
+            visibility = View.GONE
+            elevation = 30f
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        val title = TextView(this).apply {
+            text = "Диагностика камеры и микрофона"
+            setTextColor(Color.WHITE)
+            textSize = 17f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+        }
+        header.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+        val close = Button(this).apply {
+            text = "Закрыть"
+            setOnClickListener { panel.visibility = View.GONE }
+        }
+        header.addView(close)
+        panel.addView(header)
+
+        val scroll = ScrollView(this)
+        val logText = TextView(this).apply {
+            text = "Ожидание событий…"
+            setTextColor(Color.rgb(230, 233, 240))
+            textSize = 13f
+            setTextIsSelectable(true)
+            setPadding(0, (8 * density).toInt(), 0, (8 * density).toInt())
+        }
+        mediaDiagnosticsText = logText
+        scroll.addView(logText)
+        panel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        actions.addView(Button(this).apply {
+            text = "Копировать"
+            setOnClickListener {
+                val text = mediaDiagnosticsLines.joinToString("\n\n")
+                if (text.isBlank()) {
+                    Toast.makeText(this@MainActivity, "Диагностика пока пуста", Toast.LENGTH_SHORT).show()
+                } else {
+                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Majordomo media diagnostics", text))
+                    Toast.makeText(this@MainActivity, "Диагностика скопирована", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        actions.addView(Button(this).apply {
+            text = "Очистить"
+            setOnClickListener {
+                mediaDiagnosticsLines.clear()
+                mediaDiagnosticsText?.text = "Журнал очищен. Повторите действие с камерой или микрофоном."
+            }
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        panel.addView(actions)
+
+        root.addView(panel, FrameLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * 0.72f).toInt(), android.view.Gravity.BOTTOM).apply {
+            leftMargin = (8 * density).toInt()
+            rightMargin = (8 * density).toInt()
+            bottomMargin = (8 * density).toInt()
+        })
+        mediaDiagnosticsPanel = panel
+
+        val toggle = Button(this).apply {
+            text = "Диагностика"
+            setOnClickListener {
+                panel.visibility = if (panel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                if (panel.visibility == View.VISIBLE) {
+                    mediaDiagnosticsText?.text = if (mediaDiagnosticsLines.isEmpty()) "Журнал пуст. Повторите действие с камерой или микрофоном." else mediaDiagnosticsLines.joinToString("\n\n")
+                }
+            }
+            elevation = 35f
+        }
+        root.addView(toggle, FrameLayout.LayoutParams(-2, -2, android.view.Gravity.TOP or android.view.Gravity.END).apply {
+            topMargin = (8 * density).toInt()
+            marginEnd = (8 * density).toInt()
+        })
     }
 
     private fun createQrScannerOverlay() {
@@ -680,10 +775,7 @@ class MainActivity : Activity() {
                         else -> false
                     }
                 }.toTypedArray()
-                android.util.Log.d(
-                    "MajordomoMedia",
-                    "Android permission result: ${permissions.zip(grantResults.toList())}, WebView granted=${granted.joinToString()}"
-                )
+                addMediaDiagnostic("Результат Android: ${permissions.zip(grantResults.toList())}; разрешено WebView=${granted.joinToString()}; CAMERA=${checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED}; RECORD_AUDIO=${checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED}")
                 if (granted.isNotEmpty()) grantMediaRequest(request, granted) else {
                     try { request.deny() } catch (_: Exception) {}
                 }
