@@ -289,10 +289,20 @@ class MainActivity : Activity() {
                         pendingResources = resources
                         pendingAndroidPermissions = needed
                         permissionRequestInProgress = true
-                        // Request one Android permission at a time. Some OEM permission
-                        // controllers crash when WebView requests audio and video together.
-                        requestPermissions(arrayOf(needed.first()), permissionRequestCode)
+                        // Request all missing runtime permissions in one Android request.
+                        // Starting a second system dialog from onRequestPermissionsResult can
+                        // race the permission controller while it is dismissing the first dialog.
+                        requestPermissions(needed.toTypedArray(), permissionRequestCode)
                     }
+                }
+            }
+
+            override fun onPermissionRequestCanceled(request: PermissionRequest) {
+                if (pendingRequest === request) {
+                    pendingRequest = null
+                    pendingResources = emptyArray()
+                    pendingAndroidPermissions = emptyList()
+                    permissionRequestInProgress = false
                 }
             }
 
@@ -586,19 +596,6 @@ class MainActivity : Activity() {
             return
         }
         if (requestCode == permissionRequestCode) {
-            val requestedPermission = pendingAndroidPermissions.firstOrNull()
-            if (requestedPermission != null &&
-                checkSelfPermission(requestedPermission) == PackageManager.PERMISSION_GRANTED) {
-                pendingAndroidPermissions = pendingAndroidPermissions.drop(1)
-            } else {
-                pendingAndroidPermissions = emptyList()
-            }
-
-            if (pendingAndroidPermissions.isNotEmpty()) {
-                requestPermissions(arrayOf(pendingAndroidPermissions.first()), permissionRequestCode)
-                return
-            }
-
             val request = pendingRequest
             if (request != null) {
                 val granted = pendingResources.filter { resource ->
