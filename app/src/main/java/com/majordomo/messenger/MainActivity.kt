@@ -974,14 +974,26 @@ class MainActivity : Activity() {
                 val prepared = prepareImageForUpload(uri)
                 runOnUiThread { callback(prepared) }
             }.start()
-            isVideoUri(uri) -> {
-                val size = getUriSize(uri)
-                if (size <= 0L || size <= MAX_UPLOAD_VIDEO_BYTES) {
-                    callback(uri)
+            isVideoUri(uri) -> Thread {
+                // Some content providers do not expose OpenableColumns.SIZE. Materialize
+                // those videos into our cache so the real size is known and trimming can run.
+                val initialSize = getUriSize(uri)
+                val measured = if (initialSize > 0L) {
+                    Pair(uri, initialSize)
                 } else {
-                    showVideoTrimDialog(uri, callback)
+                    copyVideoToCache(uri)
                 }
-            }
+                runOnUiThread {
+                    if (measured == null || measured.second <= 0L) {
+                        Toast.makeText(this, "Не удалось определить размер видео", Toast.LENGTH_LONG).show()
+                        callback(null)
+                    } else if (measured.second <= MAX_UPLOAD_VIDEO_BYTES) {
+                        callback(measured.first)
+                    } else {
+                        showVideoTrimDialog(measured.first, callback)
+                    }
+                }
+            }.start()
             else -> callback(uri)
         }
     }
@@ -1015,6 +1027,27 @@ class MainActivity : Activity() {
         } catch (_: Exception) { null }
         val extension = (name ?: uri.lastPathSegment ?: "").substringAfterLast('.', "").lowercase()
         return extension in setOf("mp4", "m4v", "mov", "3gp", "webm", "mkv")
+    }
+
+    private fun copyVideoToCache(uri: Uri): Pair<Uri, Long>? {
+        val directory = File(cacheDir, "video-trim").apply { mkdirs() }
+        val output = File.createTempFile("source_", ".mp4", directory)
+        return try {
+            val input = contentResolver.openInputStream(uri) ?: throw IllegalStateException("Cannot open video URI")
+            input.use { source ->
+                output.outputStream().use { destination -> source.copyTo(destination) }
+            }
+            if (output.length() <= 0L) {
+                output.delete()
+                null
+            } else {
+                Pair(FileProvider.getUriForFile(this, "$packageName.fileprovider", output), output.length())
+            }
+        } catch (error: Exception) {
+            output.delete()
+            addMediaDiagnostic("Не удалось скопировать видео для проверки размера: ${error.javaClass.simpleName}: ${error.message}")
+            null
+        }
     }
 
     private fun getUriSize(uri: Uri): Long {
