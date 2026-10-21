@@ -1091,34 +1091,32 @@ class MainActivity : Activity() {
                 document.addEventListener('click', function(event) {
                   var target = event.target;
                   if (!target || !target.closest) return;
-                  var control = target.closest('button,[role="button"],input[type="button"],input[type="submit"],a');
-                  if (!control) return;
-                  var text = [
-                    control.getAttribute('aria-label') || '',
-                    control.getAttribute('title') || '',
-                    control.id || '',
-                    typeof control.className === 'string' ? control.className : '',
-                    control.textContent || ''
-                  ].join(' ');
-                  var icon = control.querySelector('svg');
-                  if (icon) text += ' ' + [
-                    icon.getAttribute('class') || '',
-                    icon.getAttribute('aria-label') || '',
-                    icon.getAttribute('data-icon') || ''
-                  ].join(' ');
-                  var descendants = control.querySelectorAll('i,span,svg');
-                  for (var i = 0; i < descendants.length; i++) {
-                    var child = descendants[i];
-                    text += ' ' + (typeof child.className === 'string' ? child.className : '');
-                    text += ' ' + (child.getAttribute('aria-label') || '') + ' ' + (child.getAttribute('data-icon') || '');
+                  var sendButton = target.closest('#tm_send');
+                  if (!sendButton) return;
+
+                  var micMode = false;
+                  try {
+                    if (typeof tmMicMode === 'function') micMode = !!tmMicMode();
+                    else if (typeof window.tmMicMode === 'function') micMode = !!window.tmMicMode();
+                    else {
+                      console.log('[NativeVoice] #tm_send clicked, but tmMicMode() is not globally accessible');
+                      return;
+                    }
+                  } catch (e) {
+                    console.log('[NativeVoice] tmMicMode() check failed: ' + e.name + ': ' + e.message);
+                    return;
                   }
-                  if (!/(microphone|\bmic\b|voice|record|диктофон|голос|запис|микрофон)/i.test(text)) return;
-                  if (/(send|отправ|upload|загруз)/i.test(text)) return;
-                  if (!window.MajordomoApp || typeof window.MajordomoApp.startNativeVoiceRecording !== 'function') return;
+                  console.log('[NativeVoice] #tm_send clicked; micMode=' + micMode);
+                  if (!micMode) return;
+                  if (!window.MajordomoApp || typeof window.MajordomoApp.startNativeVoiceRecording !== 'function') {
+                    console.log('[NativeVoice] bridge startNativeVoiceRecording is unavailable');
+                    return;
+                  }
+
                   event.preventDefault();
                   event.stopPropagation();
                   if (event.stopImmediatePropagation) event.stopImmediatePropagation();
-                  console.log('[NativeVoice] microphone control intercepted; starting native recorder');
+                  console.log('[NativeVoice] voice-mode send intercepted; starting native recorder');
                   window.MajordomoApp.startNativeVoiceRecording();
                 }, true);
                 console.log('[NativeVoice] hook installed');
