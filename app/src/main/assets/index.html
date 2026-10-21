@@ -29,6 +29,8 @@ button:active{opacity:.8}
 .recent-item small{color:var(--muted);font-size:11px}
 .delete-address{flex:0 0 44px;min-width:44px;min-height:44px;padding:0;border:1px solid var(--danger-border);border-radius:12px;background:var(--danger-bg);color:#bd3434;font-size:20px;line-height:1}
 .delete-address:active{background:var(--danger-pressed)}
+.scan-qr{width:100%;margin-top:10px;border:1px solid var(--border);background:transparent;color:var(--blue);min-height:44px}
+@media (prefers-color-scheme: dark){.scan-qr{border-color:#454b57;color:#61dafb;background:#20232a}}
 .footer{text-align:center;color:#9095a5;font-size:11px;margin-top:20px}
 #viewer{display:none;position:fixed;inset:0;background:var(--card)}
 #site{border:0;width:100%;height:100%;display:block;background:var(--card)}
@@ -36,15 +38,16 @@ button:active{opacity:.8}
 #loading:after{content:"";display:block;height:100%;width:35%;background:var(--blue);animation:slide 1.1s ease-in-out infinite}
 @keyframes slide{from{transform:translateX(-110%)}to{transform:translateX(310%)}}
 @media (prefers-color-scheme: dark){
- :root{--blue:#90a4ff;--bg:#111318;--ink:#edf0fa;--muted:#a8afc2;--card:#1b1e26;--field:#151820;--border:#3b4050;--row-border:#353a49;--shadow:0 8px 28px #0006;--danger-bg:#211a1d;--danger-border:#553239;--danger-pressed:#382126;--toast-bg:#e7eaf4;--toast-ink:#171922}
- .brand{color:var(--blue)}
- input:focus{border-color:var(--blue);box-shadow:0 0 0 3px #90a4ff24}
- button{background:var(--blue);color:#111522}
- .recent-item{background:var(--card)}
+ :root{color-scheme:dark;--blue:#61dafb;--bg:#20232a;--ink:#f5f7fa;--muted:#aeb6c2;--card:#282c34;--field:#20232a;--border:#454b57;--row-border:#3b414c;--shadow:0 8px 28px #0005;--danger-bg:#30262a;--danger-border:#69424a;--danger-pressed:#493037;--toast-bg:#f5f7fa;--toast-ink:#20232a}
+ .brand{color:#61dafb}
+ input:focus{border-color:#61dafb;box-shadow:0 0 0 3px #61dafb24}
+ button{background:#61dafb;color:#20232a}
+ .recent-item{background:#282c34}
  .delete-address{color:#ff9298}
- #loading{background:#303545}
- #loading:after{background:var(--blue)}
- .footer{color:#858c9e}
+ #loading{background:#3b414c}
+ #loading:after{background:#61dafb}
+ .footer{color:#8e98a7}
+ .card{background:#282c34}
 }
 
 #toast{position:fixed;left:16px;right:16px;bottom:20px;background:var(--toast-bg);color:var(--toast-ink);padding:13px 16px;border-radius:12px;font-size:13px;display:none;box-shadow:0 4px 18px #0002}
@@ -62,6 +65,7 @@ button:active{opacity:.8}
     <button id="open">Открыть</button>
    </div>
    <div id="message">Введите адрес, чтобы открыть сайт в полноэкранном режиме.</div>
+   <button id="scan-qr" class="scan-qr" type="button">▦ Сканировать QR-код</button>
   </section>
   <div class="section-title">Недавние адреса</div>
   <div id="recent"></div>
@@ -76,6 +80,7 @@ button:active{opacity:.8}
 <script>
 (function(){
  const home=document.getElementById('home'), viewer=document.getElementById('viewer'), input=document.getElementById('url'), openBtn=document.getElementById('open'), recent=document.getElementById('recent'), message=document.getElementById('message'), site=document.getElementById('site'), loading=document.getElementById('loading'), toast=document.getElementById('toast');
+ const scanQrBtn=document.getElementById('scan-qr');
  const colorScheme=window.matchMedia('(prefers-color-scheme: dark)');
  function applySystemTheme(){const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.content=colorScheme.matches?'#111318':'#3f51b5';}
  applySystemTheme();
@@ -111,9 +116,11 @@ button:active{opacity:.8}
    showToast('Сайт недоступен — повторим подключение через 10 секунд');
    scheduleRetry(failedUrl);
  }
+ scanQrBtn.addEventListener('click',()=>{try{if(window.MajordomoApp&&typeof MajordomoApp.scanQr==='function'){MajordomoApp.scanQr()}else{message.textContent='Сканирование QR-кода доступно в приложении Android.'}}catch(e){message.textContent='Не удалось запустить сканер QR-кода.'}});
  openBtn.addEventListener('click',()=>openSite(input.value));
  input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openSite(input.value)}});
  site.addEventListener('load',()=>{setBusy(false);try{if(window.MajordomoApp)MajordomoApp.setActiveUrl(currentUrl)}catch(e){}});
+ window.majordomoQrResult=function(value){const scanned=String(value||'').trim();if(!scanned)return;input.value=scanned;message.textContent='QR-код распознан. Проверьте адрес и нажмите «Открыть».';input.focus()};
  window.majordomoLoad=function(url){openSite(url)};
  window.majordomoShowError=function(url,reason){currentUrl=url||currentUrl;returnHome('Не удалось открыть сайт: '+reason+'\nПроверьте адрес и подключение.',url||currentUrl)};
  window.majordomoInvalidUrl=function(){message.textContent='Проверьте адрес: нужен адрес сайта с http:// или https://';home.style.display='flex';viewer.style.display='none'};
