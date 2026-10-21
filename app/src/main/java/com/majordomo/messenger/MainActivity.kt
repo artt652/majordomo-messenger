@@ -45,6 +45,11 @@ class MainActivity : Activity() {
     private var qrScannerOverlay: FrameLayout? = null
     private var qrBarcodeView: DecoratedBarcodeView? = null
     private var chooser: ValueCallback<Array<Uri>>? = null
+    private data class PendingMediaRequest(
+        val request: PermissionRequest,
+        val resources: Array<String>
+    )
+    private val queuedMediaRequests = java.util.ArrayDeque<PendingMediaRequest>()
     private var pendingRequest: PermissionRequest? = null
     private var pendingResources = emptyArray<String>()
     private var pendingAndroidPermissions = emptyList<String>()
@@ -280,34 +285,81 @@ class MainActivity : Activity() {
                         needed.add(Manifest.permission.RECORD_AUDIO)
                     }
                     if (needed.isEmpty()) {
-                        request.grant(resources)
+                        grantMediaRequest(request, resources)
                     } else if (permissionRequestInProgress) {
-                        request.deny()
+                        // Pages can request audio and video separately. Queue the second
+                        // request instead of rejecting it while Android's dialog is visible.
+                        queuedMediaRequests.addLast(PendingMediaRequest(request, resources))
                     } else {
-                        pendingRequest?.deny()
-                        pendingRequest = request
-                        pendingResources = resources
-                        pendingAndroidPermissions = needed
-                        permissionRequestInProgress = true
-                        // Request all missing runtime permissions in one Android request.
-                        // Starting a second system dialog from onRequestPermissionsResult can
-                        // race the permission controller while it is dismissing the first dialog.
-                        requestPermissions(needed.toTypedArray(), permissionRequestCode)
+                        startAndroidMediaPermissionRequest(request, resources, needed)
                     }
                 }
             }
 
             override fun onPermissionRequestCanceled(request: PermissionRequest) {
+                val iterator = queuedMediaRequests.iterator()
+                while (iterator.hasNext()) {
+                    if (iterator.next().request === request) iterator.remove()
+                }
                 if (pendingRequest === request) {
+                    // Keep the Android-dialog-in-progress flag until its result arrives;
+                    // otherwise another request could launch a competing system dialog.
                     pendingRequest = null
                     pendingResources = emptyArray()
                     pendingAndroidPermissions = emptyList()
-                    permissionRequestInProgress = false
                 }
             }
 
             override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
                 callback.invoke(origin, false, false)
+            }
+        }
+    }
+
+    private fun grantMediaRequest(request: PermissionRequest, resources: Array<String>) {
+        try {
+            request.grant(resources)
+            android.util.Log.d("MajordomoMedia", "Granted WebView media resources: ${resources.joinToString()}")
+        } catch (error: Exception) {
+            android.util.Log.e("MajordomoMedia", "WebView media grant failed", error)
+            try { request.deny() } catch (_: Exception) {}
+        }
+    }
+
+    private fun startAndroidMediaPermissionRequest(
+        request: PermissionRequest,
+        resources: Array<String>,
+        needed: List<String>
+    ) {
+        pendingRequest = request
+        pendingResources = resources
+        pendingAndroidPermissions = needed
+        permissionRequestInProgress = true
+        android.util.Log.d(
+            "MajordomoMedia",
+            "Requesting Android permissions for origin=${request.origin}, resources=${resources.joinToString()}, missing=${needed.joinToString()}"
+        )
+        requestPermissions(needed.toTypedArray(), permissionRequestCode)
+    }
+
+    private fun processQueuedMediaRequests() {
+        if (permissionRequestInProgress) return
+        while (!queuedMediaRequests.isEmpty()) {
+            val queued = queuedMediaRequests.removeFirst()
+            val needed = mutableListOf<String>()
+            if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in queued.resources &&
+                checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                needed.add(Manifest.permission.CAMERA)
+            }
+            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in queued.resources &&
+                checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                needed.add(Manifest.permission.RECORD_AUDIO)
+            }
+            if (needed.isEmpty()) {
+                grantMediaRequest(queued.request, queued.resources)
+            } else {
+                startAndroidMediaPermissionRequest(queued.request, queued.resources, needed)
+                return
             }
         }
     }
@@ -607,12 +659,19 @@ class MainActivity : Activity() {
                         else -> false
                     }
                 }.toTypedArray()
-                if (granted.isNotEmpty()) request.grant(granted) else request.deny()
+                android.util.Log.d(
+                    "MajordomoMedia",
+                    "Android permission result: ${permissions.zip(grantResults.toList())}, WebView granted=${granted.joinToString()}"
+                )
+                if (granted.isNotEmpty()) grantMediaRequest(request, granted) else {
+                    try { request.deny() } catch (_: Exception) {}
+                }
             }
             pendingRequest = null
             pendingResources = emptyArray()
             pendingAndroidPermissions = emptyList()
             permissionRequestInProgress = false
+            processQueuedMediaRequests()
         }
     }
 
@@ -665,6 +724,9 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         chooser?.onReceiveValue(null)
         pendingRequest?.deny()
+        while (!queuedMediaRequests.isEmpty()) {
+            try { queuedMediaRequests.removeFirst().request.deny() } catch (_: Exception) {}
+        }
         pendingRequest = null
         pendingResources = emptyArray()
         pendingAndroidPermissions = emptyList()
