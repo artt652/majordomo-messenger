@@ -77,6 +77,7 @@ class MainActivity : Activity() {
     private var qrBarcodeView: DecoratedBarcodeView? = null
     private var chooser: ValueCallback<Array<Uri>>? = null
     private var pendingChooserParams: WebChromeClient.FileChooserParams? = null
+    private var pendingUploadLimitBytes: Long? = null
     private var pendingCaptureUri: Uri? = null
     private var pendingCaptureFile: File? = null
     private data class PendingMediaRequest(
@@ -286,14 +287,15 @@ class MainActivity : Activity() {
                 chooser?.onReceiveValue(null)
                 chooser = callback
                 pendingChooserParams = params
-
-                // capture is only a hint to WebView. Launch the camera explicitly because
-                // some Android file pickers ignore it and open the gallery instead.
-                if (params.isCaptureEnabled) {
-                    val mime = captureMimeType(params.acceptTypes)
-                    if (mime != null && launchCameraCapture(mime)) return true
+                resolveUploadLimitBytes(view) { limitBytes ->
+                    pendingUploadLimitBytes = limitBytes
+                    if (params.isCaptureEnabled) {
+                        val mime = captureMimeType(params.acceptTypes)
+                        if (mime != null && launchCameraCapture(mime)) return@resolveUploadLimitBytes
+                    }
+                    if (!launchFileChooser()) finishFileChooser(null)
                 }
-                return launchFileChooser()
+                return true
             }
 
             override fun onPermissionRequest(request: PermissionRequest) {
@@ -915,6 +917,48 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * Read tmMaxFile from the active page. The server substitutes its effective
+     * PHP upload limit into this variable; 50 MiB is only our hard ceiling.
+     * A small margin is reserved for multipart request overhead.
+     */
+    private fun resolveUploadLimitBytes(view: WebView, callback: (Long?) -> Unit) {
+        val script = """
+            (function() {
+                try {
+                    var html = document.documentElement ? document.documentElement.innerHTML : '';
+                    if (html.indexOf('[#MAX_FILE_MB#]') !== -1) return null;
+                    if (typeof tmMaxFile !== 'undefined') {
+                        var n = Number(tmMaxFile);
+                        if (isFinite(n) && n > 0) return n;
+                    }
+                    var match = html.match(/tmMaxFile\s*=\s*parseFloat\(\s*['"]([^'"]+)['"]\s*\)/);
+                    if (match) {
+                        var parsed = parseFloat(match[1]);
+                        if (isFinite(parsed) && parsed > 0) return parsed;
+                    }
+                } catch (e) {}
+                return null;
+            })()
+        """.trimIndent()
+        view.evaluateJavascript(script) { result ->
+            val mb = result?.trim()?.removeSurrounding("\"")?.toDoubleOrNull()
+            val limit = mb
+                ?.takeIf { it.isFinite() && it > 0.0 }
+                ?.let { (it * 1024.0 * 1024.0 * 0.95).toLong() }
+                ?.coerceAtMost(MAX_UPLOAD_VIDEO_BYTES)
+                ?.takeIf { it > 0L }
+            if (limit == null) {
+                addMediaDiagnostic("Не удалось прочитать tmMaxFile со страницы ${view.url}")
+            } else {
+                addMediaDiagnostic("Лимит загрузки со страницы: %.2f МиБ".format(
+                    java.util.Locale.getDefault(), limit / (1024.0 * 1024.0)
+                ))
+            }
+            callback(limit)
+        }
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
@@ -930,7 +974,7 @@ class MainActivity : Activity() {
                 }
 
                 if (capturedUri != null) {
-                    prepareMediaForUpload(capturedUri) { uploadUri ->
+                    prepareMediaForUpload(capturedUri, pendingUploadLimitBytes) { uploadUri ->
                         if (uploadUri != null) {
                             chooser?.onReceiveValue(arrayOf(uploadUri))
                             clearPendingCapture(deleteFile = uploadUri != capturedUri || capturedUri != outputUri)
@@ -954,7 +998,7 @@ class MainActivity : Activity() {
                     finishFileChooser(null)
                 } else {
                     // Prepare selected images and oversized videos before returning them to WebView.
-                    prepareMediaBatch(result) { prepared ->
+                    prepareMediaBatch(result, pendingUploadLimitBytes) { prepared ->
                         finishFileChooser(prepared)
                     }
                 }
@@ -968,44 +1012,45 @@ class MainActivity : Activity() {
      * Photos keep the existing compression path; videos over the current page limit
      * are sent to the native trimming dialog. Other files are untouched.
      */
-    private fun prepareMediaForUpload(uri: Uri, callback: (Uri?) -> Unit) {
+    private fun prepareMediaForUpload(uri: Uri, maxBytes: Long?, callback: (Uri?) -> Unit) {
         when {
             isImageUri(uri) -> Thread {
                 val prepared = prepareImageForUpload(uri)
                 runOnUiThread { callback(prepared) }
             }.start()
-            isVideoUri(uri) -> Thread {
-                // Some content providers do not expose OpenableColumns.SIZE. Materialize
-                // those videos into our cache so the real size is known and trimming can run.
-                val initialSize = getUriSize(uri)
-                val measured = if (initialSize > 0L) {
-                    Pair(uri, initialSize)
-                } else {
-                    copyVideoToCache(uri)
+            isVideoUri(uri) -> {
+                if (maxBytes == null) {
+                    Toast.makeText(this, "Не удалось определить лимит загрузки сервера. Обновите страницу и попробуйте снова.", Toast.LENGTH_LONG).show()
+                    callback(null)
+                    return
                 }
-                runOnUiThread {
-                    if (measured == null || measured.second <= 0L) {
-                        Toast.makeText(this, "Не удалось определить размер видео", Toast.LENGTH_LONG).show()
-                        callback(null)
-                    } else if (measured.second <= MAX_UPLOAD_VIDEO_BYTES) {
-                        callback(measured.first)
-                    } else {
-                        showVideoTrimDialog(measured.first, callback)
+                Thread {
+                    val initialSize = getUriSize(uri)
+                    val measured = if (initialSize > 0L) Pair(uri, initialSize) else copyVideoToCache(uri)
+                    runOnUiThread {
+                        if (measured == null || measured.second <= 0L) {
+                            Toast.makeText(this, "Не удалось определить размер видео", Toast.LENGTH_LONG).show()
+                            callback(null)
+                        } else if (measured.second <= maxBytes) {
+                            callback(measured.first)
+                        } else {
+                            showVideoTrimDialog(measured.first, maxBytes, callback)
+                        }
                     }
-                }
-            }.start()
+                }.start()
+            }
             else -> callback(uri)
         }
     }
 
-    private fun prepareMediaBatch(uris: Array<Uri>, callback: (Array<Uri>?) -> Unit) {
+    private fun prepareMediaBatch(uris: Array<Uri>, maxBytes: Long?, callback: (Array<Uri>?) -> Unit) {
         val prepared = ArrayList<Uri>(uris.size)
         fun next(index: Int) {
             if (index >= uris.size) {
                 callback(prepared.toTypedArray())
                 return
             }
-            prepareMediaForUpload(uris[index]) { uri ->
+            prepareMediaForUpload(uris[index], maxBytes) { uri ->
                 if (uri == null) {
                     callback(null)
                 } else {
@@ -1064,7 +1109,7 @@ class MainActivity : Activity() {
         } catch (_: Exception) { -1L }
     }
 
-    private fun showVideoTrimDialog(uri: Uri, callback: (Uri?) -> Unit) {
+    private fun showVideoTrimDialog(uri: Uri, maxBytes: Long, callback: (Uri?) -> Unit) {
         val durationMs = try {
             val retriever = MediaMetadataRetriever()
             try {
@@ -1098,7 +1143,7 @@ class MainActivity : Activity() {
         val sizeMb = getUriSize(uri).toDouble() / (1024.0 * 1024.0)
         val info = TextView(this).apply {
             text = "Размер: %.1f МБ. Лимит: %.0f МБ. Выберите фрагмент видео.".format(
-                java.util.Locale.getDefault(), sizeMb, MAX_UPLOAD_VIDEO_BYTES / (1024.0 * 1024.0)
+                java.util.Locale.getDefault(), sizeMb, maxBytes / (1024.0 * 1024.0)
             )
             setPadding(0, dp(8), 0, dp(8))
         }
@@ -1168,9 +1213,9 @@ class MainActivity : Activity() {
                             callback(null)
                         } else {
                             val outputUri = FileProvider.getUriForFile(this, "$packageName.fileprovider", output)
-                            if (output.length() > MAX_UPLOAD_VIDEO_BYTES) {
+                            if (output.length() > maxBytes) {
                                 Toast.makeText(this, "Фрагмент всё ещё больше лимита. Выберите более короткий.", Toast.LENGTH_LONG).show()
-                                showVideoTrimDialog(outputUri, callback)
+                                showVideoTrimDialog(outputUri, maxBytes, callback)
                             } else {
                                 callback(outputUri)
                             }
