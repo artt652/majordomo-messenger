@@ -30,6 +30,8 @@ button:active{opacity:.8}
 .delete-address{flex:0 0 44px;min-width:44px;min-height:44px;padding:0;border:1px solid var(--danger-border);border-radius:12px;background:var(--danger-bg);color:#bd3434;font-size:20px;line-height:1}
 .delete-address:active{background:var(--danger-pressed)}
 .scan-qr{width:100%;margin-top:10px;border:1px solid var(--border);background:transparent;color:var(--blue);min-height:44px}
+.diagnostics-option{display:flex;align-items:center;gap:10px;margin-top:14px;font-size:13px;font-weight:500;color:var(--muted);line-height:1.4}
+.diagnostics-option input{flex:0 0 auto;width:18px;height:18px;margin:0;accent-color:var(--blue)}
 @media (prefers-color-scheme: dark){.scan-qr{border-color:#454b57;color:#61dafb;background:#20232a}}
 .footer{text-align:center;color:#9095a5;font-size:11px;margin-top:20px}
 #viewer{display:none;position:fixed;inset:0;background:var(--card)}
@@ -66,6 +68,10 @@ button:active{opacity:.8}
    </div>
    <div id="message">Введите адрес, чтобы открыть сайт в полноэкранном режиме.</div>
    <button id="scan-qr" class="scan-qr" type="button">▦ Сканировать QR-код</button>
+   <label class="diagnostics-option" for="media-diagnostics">
+    <input id="media-diagnostics" type="checkbox">
+    <span>Включить диагностику камеры и микрофона</span>
+   </label>
   </section>
   <div class="section-title">Недавние адреса</div>
   <div id="recent"></div>
@@ -81,6 +87,8 @@ button:active{opacity:.8}
 (function(){
  const home=document.getElementById('home'), viewer=document.getElementById('viewer'), input=document.getElementById('url'), openBtn=document.getElementById('open'), recent=document.getElementById('recent'), message=document.getElementById('message'), site=document.getElementById('site'), loading=document.getElementById('loading'), toast=document.getElementById('toast');
  const scanQrBtn=document.getElementById('scan-qr');
+ const diagnosticsCheckbox=document.getElementById('media-diagnostics');
+ diagnosticsCheckbox.addEventListener('change',()=>{try{if(window.MajordomoApp&&typeof MajordomoApp.setMediaDiagnosticsEnabled==='function'){MajordomoApp.setMediaDiagnosticsEnabled(diagnosticsCheckbox.checked)}else{showToast('Настройка диагностики доступна в приложении Android')}}catch(e){showToast('Не удалось изменить настройку диагностики')}});
  const colorScheme=window.matchMedia('(prefers-color-scheme: dark)');
  function applySystemTheme(){const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.content='#111318';}
  applySystemTheme();
