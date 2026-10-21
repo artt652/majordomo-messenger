@@ -47,6 +47,8 @@ class MainActivity : Activity() {
     private var chooser: ValueCallback<Array<Uri>>? = null
     private var pendingRequest: PermissionRequest? = null
     private var pendingResources = emptyArray<String>()
+    private var pendingAndroidPermissions = emptyList<String>()
+    private var permissionRequestInProgress = false
     @Volatile private var activeSiteUrl: String = ""
     @Volatile private var lastSuccessfulSiteUrl: String = ""
     private var offlineCacheFallbackInProgress = false
@@ -277,12 +279,19 @@ class MainActivity : Activity() {
                         checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                         needed.add(Manifest.permission.RECORD_AUDIO)
                     }
-                    if (needed.isEmpty()) request.grant(resources)
-                    else {
+                    if (needed.isEmpty()) {
+                        request.grant(resources)
+                    } else if (permissionRequestInProgress) {
+                        request.deny()
+                    } else {
                         pendingRequest?.deny()
                         pendingRequest = request
                         pendingResources = resources
-                        requestPermissions(needed.toTypedArray(), permissionRequestCode)
+                        pendingAndroidPermissions = needed
+                        permissionRequestInProgress = true
+                        // Request one Android permission at a time. Some OEM permission
+                        // controllers crash when WebView requests audio and video together.
+                        requestPermissions(arrayOf(needed.first()), permissionRequestCode)
                     }
                 }
             }
@@ -577,12 +586,30 @@ class MainActivity : Activity() {
             return
         }
         if (requestCode == permissionRequestCode) {
+            val missing = pendingAndroidPermissions.filter {
+                checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+            }
+            if (missing.isNotEmpty() &&
+                grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                pendingAndroidPermissions = missing.drop(1)
+            } else {
+                pendingAndroidPermissions = emptyList()
+            }
+
+            if (pendingAndroidPermissions.isNotEmpty()) {
+                requestPermissions(arrayOf(pendingAndroidPermissions.first()), permissionRequestCode)
+                return
+            }
+
             val request = pendingRequest
             if (request != null) {
                 val granted = pendingResources.filter { resource ->
                     when (resource) {
-                        PermissionRequest.RESOURCE_VIDEO_CAPTURE -> checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-                        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                        PermissionRequest.RESOURCE_VIDEO_CAPTURE ->
+                            checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                        PermissionRequest.RESOURCE_AUDIO_CAPTURE ->
+                            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                         else -> false
                     }
                 }.toTypedArray()
@@ -590,6 +617,8 @@ class MainActivity : Activity() {
             }
             pendingRequest = null
             pendingResources = emptyArray()
+            pendingAndroidPermissions = emptyList()
+            permissionRequestInProgress = false
         }
     }
 
@@ -642,6 +671,10 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         chooser?.onReceiveValue(null)
         pendingRequest?.deny()
+        pendingRequest = null
+        pendingResources = emptyArray()
+        pendingAndroidPermissions = emptyList()
+        permissionRequestInProgress = false
         CookieManager.getInstance().flush()
         if (::site.isInitialized) site.destroy()
         if (::launcher.isInitialized) launcher.destroy()
