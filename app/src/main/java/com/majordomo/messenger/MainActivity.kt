@@ -93,6 +93,7 @@ class MainActivity : Activity() {
     private var activeVoiceDialog: AlertDialog? = null
     private val activeVoiceAnimations = mutableListOf<android.animation.Animator>()
     private var pendingCaptureUri: Uri? = null
+    @Volatile private var pendingNativeCameraMimeType: String? = null
     private var pendingCaptureFile: File? = null
     private data class PendingMediaRequest(
         val request: PermissionRequest,
@@ -217,6 +218,7 @@ class MainActivity : Activity() {
                 if (view === site && !url.isNullOrBlank() && url.startsWith("http")) {
                     if (mediaDiagnosticsEnabled) installMediaJavaScriptDiagnostics(view)
                     installNativeVoiceRecordingHook(view)
+                    installNativeCameraButtonHook(view)
                     if (offlineCacheFallbackInProgress) {
                         view.settings.cacheMode = WebSettings.LOAD_DEFAULT
                         offlineCacheFallbackInProgress = false
@@ -313,6 +315,11 @@ class MainActivity : Activity() {
                     if (pendingNativeVoiceRecording) {
                         pendingNativeVoiceRecording = false
                         startNativeVoiceRecording()
+                        return@resolveUploadLimitBytes
+                    }
+                    val forcedCameraMime = pendingNativeCameraMimeType
+                    pendingNativeCameraMimeType = null
+                    if (forcedCameraMime != null && launchCameraCapture(forcedCameraMime)) {
                         return@resolveUploadLimitBytes
                     }
                     if (params.isCaptureEnabled) {
@@ -1034,6 +1041,24 @@ class MainActivity : Activity() {
         }
 
         @android.webkit.JavascriptInterface
+        fun openNativeCamera(kind: String) {
+            val mime = when (kind.lowercase()) {
+                "image" -> "image/jpeg"
+                "video" -> "video/mp4"
+                else -> return
+            }
+            runOnUiThread {
+                if (site.visibility != View.VISIBLE) return@runOnUiThread
+                pendingNativeCameraMimeType = mime
+                val labelId = if (kind.equals("video", ignoreCase = true)) "tm_cam_video_btn" else "tm_cam_photo"
+                site.evaluateJavascript(
+                    "(function(){var label=document.getElementById('$labelId');var input=label&&label.querySelector('input[type=file]');if(input)input.click();})()",
+                    null
+                )
+            }
+        }
+
+        @android.webkit.JavascriptInterface
         fun setMediaDiagnosticsEnabled(enabled: Boolean) {
             runOnUiThread { updateMediaDiagnosticsVisibility(enabled) }
         }
@@ -1269,6 +1294,40 @@ class MainActivity : Activity() {
      * then returns its M4A through the existing file input, so the site's upload handler remains
      * responsible for sending the message.
      */
+
+    /**
+     * The terminals page uses capture file inputs for camera buttons. Some Android WebView
+     * versions report isCaptureEnabled=false and open the gallery instead. Route those
+     * explicit camera buttons through the native camera intents, while leaving gallery
+     * and ordinary attachment inputs untouched.
+     */
+    private fun installNativeCameraButtonHook(view: WebView) {
+        val script = """
+            (function() {
+              try {
+                if (window.__majordomoNativeCameraHookInstalled) return;
+                window.__majordomoNativeCameraHookInstalled = true;
+                document.addEventListener('click', function(event) {
+                  var target = event.target;
+                  if (!target || !target.closest) return;
+                  var label = target.closest('#tm_cam_photo, #tm_cam_video_btn');
+                  if (!label || target.tagName === 'INPUT') return;
+                  if (!window.MajordomoApp ||
+                      typeof window.MajordomoApp.openNativeCamera !== 'function') return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+                  window.MajordomoApp.openNativeCamera(
+                    label.id === 'tm_cam_video_btn' ? 'video' : 'image'
+                  );
+                }, true);
+              } catch (e) {
+                console.log('[NativeCamera] hook error: ' + e.name + ': ' + e.message);
+              }
+            })();
+        """.trimIndent()
+        view.evaluateJavascript(script, null)
+    }
 
     private fun installNativeVoiceRecordingHook(view: WebView) {
         val script = """
